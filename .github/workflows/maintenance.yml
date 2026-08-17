@@ -1,0 +1,48 @@
+name: Daily GoMining Maintenance
+
+on:
+  schedule:
+    # 6 attempts, hourly, starting when the daily window actually opens
+    # (00:00 UTC = 8:00pm US Eastern, confirmed via GoMining's own FAQ):
+    # 8:15, 9:15, 10:15, 11:15pm, 12:15, 1:15am ET (EDT, UTC-4 — shifts
+    # an hour earlier during EST/winter since GitHub's scheduler doesn't
+    # follow DST).
+    - cron: "15 0-5 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run maintenance script
+        env:
+          # Comma-separated account labels. For each label, add a matching
+          # GOMINING_COOKIES_<LABEL> secret below (e.g. a third account
+          # needs GOMINING_ACCOUNT_LABELS: PRIMARY,SECONDARY,THIRD plus a
+          # new GOMINING_COOKIES_THIRD: ${{ secrets.GOMINING_COOKIES_THIRD }} line).
+          GOMINING_ACCOUNT_LABELS: PRIMARY,SECONDARY
+          GOMINING_COOKIES_PRIMARY: ${{ secrets.GOMINING_COOKIES_PRIMARY }}
+          GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
+          GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+        run: python gomining_maintenance.py
+
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: debug-artifacts/
+          retention-days: 7
