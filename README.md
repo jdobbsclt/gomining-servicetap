@@ -36,6 +36,8 @@ Push it to your own GitHub account, private or public, doesn't matter.
 
 ### 2. Set your account label
 
+#### Automating one account
+
 Most people only need to automate one account. Edit
 `.github/workflows/maintenance.yml`:
 
