@@ -113,15 +113,37 @@ log — you want to see `OK` for every account, not `FAILED`.
 From here it's fully automated on the schedule in
 `.github/workflows/maintenance.yml`.
 
+### 7. (Optional) Add Sentry error monitoring
+
+The script and workflow work fully without this — it's just better
+visibility. Two things Sentry adds that GitHub's own failure emails can't:
+searchable error history/trends across runs, and — the more important one —
+detecting when the schedule **fails to fire at all**. GitHub only emails you
+about a run that started and failed; a run that never started produces
+nothing. Sentry's cron monitor alerts if no check-in arrives within the
+expected window, closing that gap.
+
+1. Create a free Sentry project (any org) and grab its DSN
+2. Add it as a repository secret named `SENTRY_DSN`
+3. That's it — `gomining_maintenance.py` picks it up automatically next run
+
+If you skip this, everything still works — you just rely on GitHub's
+failure emails alone, which is exactly what this repo ran on for a while.
+
 ## If a run fails
 
-GitHub emails you automatically. Check the run log first:
+GitHub emails you automatically on any run that starts and fails. Check the
+run log first:
 
 - **"redirected to login"** — that account's session expired. Recapture its
   cookies (step 3 above) and update its secret.
 - **Anything else** — a screenshot + HTML snapshot of the page at the moment
   of failure are uploaded as a `debug-artifacts` workflow artifact, to help
   figure out what actually happened.
+
+If a scheduled run doesn't fire *at all* (no email, nothing in the Actions
+tab), that's invisible to GitHub's own notifications by design — see step 7
+above (Sentry) if you want to catch that case too.
 
 ## Maintainer notes (if you're editing this repo, not just using it)
 

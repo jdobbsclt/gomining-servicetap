@@ -28,6 +28,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
+        # This step hung for 49+ minutes once (2026-08-17) before the
+        # job-level timeout above existed. A step-specific timeout makes
+        # that failure mode instantly identifiable in the Actions log
+        # instead of a generic job-level timeout with no clue which step.
+        timeout-minutes: 2
         run: |
           pip install -r requirements.txt
           playwright install --with-deps chromium

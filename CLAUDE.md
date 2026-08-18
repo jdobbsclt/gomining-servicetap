@@ -32,7 +32,26 @@ If you have more than one `gh` login on your machine and `git push` / `gh` comma
 
 - `GOMINING_COOKIES_<LABEL>` (one per account in `GOMINING_ACCOUNT_LABELS`) — session cookies (JSON array), self-refreshed by the script every run. See the `capture-cookies` skill to re-capture from scratch.
 - `GH_PAT_SECRETS_WRITE` — fine-grained PAT scoped to only this repo, Secrets: read/write, nothing else. Used by the script to call `gh secret set` and self-refresh the cookie secrets above.
+- `SENTRY_DSN` — optional. Script and workflow both run fine without it (guarded by `if SENTRY_DSN:` throughout); just no Sentry visibility if unset.
+
+## Timeouts (added after a real 49-minute hang, 2026-08-17)
+
+The "Install dependencies" step (`pip install` + `playwright install --with-deps chromium`) hung for 49+ minutes one night — most likely a transient GitHub-runner/network hiccup, not anything in this repo's code (see git log for the incident). Two timeouts now guard against a repeat, both in `.github/workflows/maintenance.yml`:
+- Job-level `timeout-minutes: 3` — every observed successful run completes in 47-56s, so this is generous headroom while keeping worst-case hang time short. A timeout-killed run counts as *failed*, which triggers GitHub's failure email — before this existed, a hang like that was invisible.
+- Step-level `timeout-minutes: 2` on "Install dependencies" specifically — isolates *which* step hung in the Actions log, instead of a generic job-level timeout with no clue where.
+
+If you tighten these further, check actual observed run durations first (`gh run list` shows durations) rather than guessing.
+
+## Sentry (error monitoring + cron check-ins)
+
+Optional, wired in `gomining_maintenance.py` guarded by `if SENTRY_DSN:`. Two things worth knowing if you touch this:
+
+- **`include_local_variables=False` in `sentry_sdk.init()` is deliberate, not an oversight.** Sentry's default captures local variable *values* in stack traces. This script holds live session cookies in local variables (`cookies`, `cookies_json`) — leaving the default on would leak bearer credentials into Sentry on any exception. Don't turn this back on without solving that first.
+- **Crons check-in uses manual `capture_checkin()`, not the `@monitor` decorator.** The decorator only catches `Exception`; this script signals failure via `sys.exit(1)`, which raises `SystemExit` (a `BaseException`, not caught by a bare `except Exception`). The decorator would have silently reported `OK` on a real failure. Manual check-ins report success/failure based on the script's own `all(results.values())` check instead.
+- **The monitor's cron schedule (`15 0-5 * * *`, UTC) is hardcoded in `main()` and must be kept in sync with `.github/workflows/maintenance.yml`'s `on.schedule` by hand** — they're two separate config values that happen to need the same value, not one shared source of truth.
+- **Known gap**: Sentry only starts once the Python script runs — a hang in "Install dependencies" (like the 2026-08-17 incident above) happens *before* that, so it produces no Sentry error, only an eventual server-side MISSED alert once `checkin_margin` (60 min) elapses. The step-level timeout above is the actual mitigation for that specific failure mode, not Sentry.
+- Org: `gomining-service-button` (separate from the `hive-mentality-honey` org used for BeeSpace — deliberately, so this personal automation's data doesn't mix with the business account). Same Sentry login as `hive-mentality-honey`, though — `find_organizations` shows both without needing to reconnect anything.
 
 ## If a scheduled run fails
 
-GitHub emails on failure. Check the run log first — "redirected to login" means a session expired; use the `capture-cookies` skill for that account. Failures also upload a screenshot + HTML snapshot as a workflow artifact (`debug-artifacts`) for anything less obvious.
+GitHub emails on failure. Check the run log first — "redirected to login" means a session expired; use the `capture-cookies` skill for that account. Failures also upload a screenshot + HTML snapshot as a workflow artifact (`debug-artifacts`) for anything less obvious. If `SENTRY_DSN` is set, also check the Sentry project for grouped/historical error data.
