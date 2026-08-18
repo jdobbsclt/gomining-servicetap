@@ -13,6 +13,11 @@ on:
 jobs:
   run-maintenance:
     runs-on: ubuntu-latest
+    # Normal runs finish in well under a minute. Without this, a hung step
+    # (e.g. a stuck dependency install) can run for up to GitHub's 6-hour
+    # default before being killed, burning Actions minutes for no benefit
+    # and blocking a clean signal on whether the schedule itself is working.
+    timeout-minutes: 8
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
