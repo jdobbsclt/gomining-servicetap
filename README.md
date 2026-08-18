@@ -48,8 +48,7 @@ env:
 `MAIN` is just an example. Any short label works, it just has to match
 between the two lines.
 
-<details>
-<summary><strong>Automating more than one account</strong></summary>
+#### Automating more than one account
 
 Add a comma-separated label for each account, plus a matching
 `GOMINING_COOKIES_<LABEL>` line:
@@ -64,8 +63,6 @@ env:
 This repo's own `.github/workflows/maintenance.yml` is actually configured
 this way already (two real accounts); check it out as a working example of
 the multi-account case. You'll repeat step 3 below once per account.
-
-</details>
 
 ### 3. Capture your account's session cookies
 
