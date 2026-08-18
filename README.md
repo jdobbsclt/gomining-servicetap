@@ -165,11 +165,23 @@ multi-account `gh` CLI quirk worth knowing about.
 
 ## A note on GoMining's terms
 
-Automating your own account's daily maintenance tap appears to be a fairly
-common, openly-discussed practice in the GoMining community (see e.g.
-[this browser extension that does the same thing](https://gist.github.com/magicdude4eva/11a9b24e2066a5f0198c6df241d5059f)),
-but this isn't legal advice: check GoMining's current Terms of Service
-yourself before relying on this.
+We read GoMining's [Terms of Use](https://gomining.com/terms) directly to
+check this. The terms do prohibit bots/automation in a few places, but each
+one is scoped to a specific feature, not the daily maintenance button:
+Bonus Miner rewards (2.6.6), the Miner Wars "Spell Bot" (4.3.6), the AI
+Assistant (8.4.7d), and raffle/contest entries (10.3). The maintenance
+discount itself (3.1-3.2) has no automation restriction attached to it
+anywhere in the document.
+
+Automating your own account's daily maintenance tap also appears to be a
+fairly common, openly-discussed practice in the GoMining community (see e.g.
+[this browser extension that does the same thing](https://gist.github.com/magicdude4eva/11a9b24e2066a5f0198c6df241d5059f)).
+
+That said, the terms (Section 42) also reserve the right to terminate any
+account "for any other reason or no reason," a standard broad clause that
+applies regardless of any specific rule being broken. This isn't legal
+advice, terms can change, and you should check GoMining's current Terms of
+Service yourself before relying on this.
 
 ## License
 
