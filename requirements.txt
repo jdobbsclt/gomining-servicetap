@@ -1,1 +1,2 @@
 playwright==1.47.0
+sentry-sdk==2.38.0

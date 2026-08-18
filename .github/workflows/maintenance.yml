@@ -13,11 +13,11 @@ on:
 jobs:
   run-maintenance:
     runs-on: ubuntu-latest
-    # Normal runs finish in well under a minute. Without this, a hung step
-    # (e.g. a stuck dependency install) can run for up to GitHub's 6-hour
-    # default before being killed, burning Actions minutes for no benefit
-    # and blocking a clean signal on whether the schedule itself is working.
-    timeout-minutes: 8
+    # Every observed successful run has completed in 47-56s. 3 minutes is
+    # generous headroom over that while keeping the worst-case hang short --
+    # without this, a hung step (e.g. a stuck dependency install) can run
+    # for up to GitHub's 6-hour default before being killed.
+    timeout-minutes: 3
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
@@ -42,6 +42,9 @@ jobs:
           GOMINING_COOKIES_PRIMARY: ${{ secrets.GOMINING_COOKIES_PRIMARY }}
           GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
           GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+          # Optional -- error monitoring + cron check-ins. Script runs fine
+          # without this secret set, just with no Sentry visibility.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: python gomining_maintenance.py
 
       - name: Upload debug artifacts on failure
