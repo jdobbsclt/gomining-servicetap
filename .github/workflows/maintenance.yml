@@ -1,4 +1,4 @@
-name: Daily GoMining Maintenance
+name: Daily Service Button Tap
 
 on:
   schedule:

@@ -1,4 +1,4 @@
-# gomining-automation
+# gomining-servicetap
 
 Automates tapping GoMining's daily "maintenance" button for one or more accounts (configured via `GOMINING_ACCOUNT_LABELS`) so their maintenance-discount streak never lapses, without needing a laptop to be on. Runs on GitHub Actions. See `README.md` for user-facing setup instructions — this file is operational/maintainer notes.
 
@@ -17,8 +17,8 @@ The maintenance discount resets on a **fixed UTC calendar-day boundary (00:00 UT
 
 1. **The `on.schedule` cron can get "stuck."** GitHub's workflow registration doesn't always pick up edits to the schedule on a normal push. Symptom: you push a new cron, but runs keep firing (or not firing) on the old schedule, and `gh api repos/OWNER/REPO/actions/workflows/ID` shows `updated_at` frozen at the original creation time despite multiple pushes. **Fix: after ANY change to `on.schedule`, run (from inside the repo directory — `gh` infers the repo from the git remote, no `--repo` flag needed):**
    ```
-   gh workflow disable "Daily GoMining Maintenance"
-   gh workflow enable "Daily GoMining Maintenance"
+   gh workflow disable "Daily Service Button Tap"
+   gh workflow enable "Daily Service Button Tap"
    ```
    Confirm it worked by checking `updated_at` moved to just now (`gh api repos/{owner}/{repo}/actions/workflows/{workflow_id} --jq '{state, updated_at}'` — get the workflow ID from `gh workflow list`).
 2. **GitHub's scheduler is best-effort.** Expect 15–45 minute delays past the target time, and occasionally a dropped slot entirely — this is documented GitHub behavior (schedule events can be delayed or dropped under load, especially at `:00`), not a bug here. This is why the schedule runs multiple attempts rather than a single exact time.

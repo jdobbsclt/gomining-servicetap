@@ -1,4 +1,4 @@
-# GoMining Daily Maintenance Automation
+# GoMining ServiceTap
 
 Automatically taps GoMining's daily "maintenance" (service) button for one or
 more accounts, so your maintenance-discount streak never lapses — even if
@@ -105,7 +105,7 @@ secret**.
 
 ### 5. Test it
 
-**Actions** tab → "Daily GoMining Maintenance" → **Run workflow**. Check the
+**Actions** tab → "Daily Service Button Tap" → **Run workflow**. Check the
 log — you want to see `OK` for every account, not `FAILED`.
 
 ### 6. Let it run
