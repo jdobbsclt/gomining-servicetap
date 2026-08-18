@@ -39,6 +39,8 @@ Push it to your own GitHub account, private or public, doesn't matter.
 Most people only need to automate one account. Edit
 `.github/workflows/maintenance.yml`:
 
+#### <u>Automating one account</u>
+
 ```yaml
 env:
   GOMINING_ACCOUNT_LABELS: MAIN
@@ -48,7 +50,7 @@ env:
 `MAIN` is just an example. Any short label works, it just has to match
 between the two lines.
 
-#### Automating more than one account
+#### <u>Automating more than one account</u>
 
 Add a comma-separated label for each account, plus a matching
 `GOMINING_COOKIES_<LABEL>` line:
