@@ -22,7 +22,9 @@ The maintenance discount resets on a **fixed UTC calendar-day boundary (00:00 UT
    ```
    Confirm it worked by checking `updated_at` moved to just now (`gh api repos/{owner}/{repo}/actions/workflows/{workflow_id} --jq '{state, updated_at}'` — get the workflow ID from `gh workflow list`).
 2. **GitHub's scheduler is best-effort.** Expect 15–45 minute delays past the target time, and occasionally a dropped slot entirely — this is documented GitHub behavior (schedule events can be delayed or dropped under load, especially at `:00`), not a bug here. This is why the schedule runs multiple attempts rather than a single exact time.
-3. Current schedule lives in `.github/workflows/maintenance.yml` — it's been iterated on a lot; check `git log` for the reasoning before changing it again.
+3. **The first day (or the first day after any schedule edit) tends to be the flakiest.** Our very first-ever scheduled workflow on this repo took >24h to fire even once. Every time we've since edited the schedule, cron, or done a disable/enable cycle, the following several hours have shown more misses than the days before/after. Not proven to be causal (could just be small-sample noise), but the pattern repeated enough times this session to be worth expecting rather than panicking over — give a fresh schedule real, untouched time before concluding something's actually broken.
+4. **Don't judge reliability from short-notice test crons.** Pushing a one-off cron just 2-5 minutes ahead and watching for it repeatedly gave inconsistent results even right after a fresh disable/enable — likely because propagation itself takes real time, not just the registration action. Test by checking a full day's worth of real runs (`gh api repos/{owner}/{repo}/actions/runs`) instead of a quick manual probe.
+5. Current schedule lives in `.github/workflows/maintenance.yml` — it's been iterated on a lot; check `git log` for the reasoning before changing it again.
 
 ## GitHub CLI multi-account gotcha
 

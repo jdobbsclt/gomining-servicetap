@@ -113,6 +113,18 @@ log — you want to see `OK` for every account, not `FAILED`.
 From here it's fully automated on the schedule in
 `.github/workflows/maintenance.yml`.
 
+**Give it a day or two before worrying.** It's normal — not a sign anything's
+misconfigured — for the first scheduled run(s) after setup to be late or not
+fire at all. GitHub's scheduler is documented as best-effort (individual runs
+can lag 15-45+ minutes, or occasionally skip a slot), and in our own testing
+the very first scheduled workflow we ever created took over 24 hours to fire
+even once. It reliably got more consistent once the schedule had simply
+existed, untouched, for a while — this is exactly why the workflow runs 6
+times a night instead of once: one flaky slot doesn't matter when 5 more are
+coming. The same adjustment period tends to happen again after *any* edit to
+the schedule, not just the first setup — see `CLAUDE.md` if you change it and
+runs seem to go quiet for a bit.
+
 ### 7. (Optional) Add Sentry error monitoring
 
 The script and workflow work fully without this — it's just better
