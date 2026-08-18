@@ -50,7 +50,7 @@ Optional, wired in `gomining_maintenance.py` guarded by `if SENTRY_DSN:`. Two th
 - **Crons check-in uses manual `capture_checkin()`, not the `@monitor` decorator.** The decorator only catches `Exception`; this script signals failure via `sys.exit(1)`, which raises `SystemExit` (a `BaseException`, not caught by a bare `except Exception`). The decorator would have silently reported `OK` on a real failure. Manual check-ins report success/failure based on the script's own `all(results.values())` check instead.
 - **The monitor's cron schedule (`15 0-5 * * *`, UTC) is hardcoded in `main()` and must be kept in sync with `.github/workflows/maintenance.yml`'s `on.schedule` by hand** — they're two separate config values that happen to need the same value, not one shared source of truth.
 - **Known gap**: Sentry only starts once the Python script runs — a hang in "Install dependencies" (like the 2026-08-17 incident above) happens *before* that, so it produces no Sentry error, only an eventual server-side MISSED alert once `checkin_margin` (60 min) elapses. The step-level timeout above is the actual mitigation for that specific failure mode, not Sentry.
-- Org: `gomining-service-button` (separate from the `hive-mentality-honey` org used for BeeSpace — deliberately, so this personal automation's data doesn't mix with the business account). Same Sentry login as `hive-mentality-honey`, though — `find_organizations` shows both without needing to reconnect anything.
+- Org: `gomining-service-button` — a dedicated Sentry org, kept separate from other unrelated projects on the same Sentry login (one login, multiple orgs — no reconnection needed to switch between them).
 
 ## If a scheduled run fails
 
