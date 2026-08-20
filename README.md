@@ -62,10 +62,6 @@ env:
   GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
 ```
 
-This repo's own `.github/workflows/maintenance.yml` is actually configured
-this way already (two real accounts); check it out as a working example of
-the multi-account case. You'll repeat step 3 below once per account.
-
 ### 3. Capture your account's session cookies
 
 You never enter your GoMining password anywhere in this repo or its
