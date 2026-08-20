@@ -118,8 +118,8 @@ fire at all. GitHub's scheduler is documented as best-effort (individual runs
 can lag 15-45+ minutes, or occasionally skip a slot), and in our own testing
 the very first scheduled workflow we ever created took over 24 hours to fire
 even once. It reliably got more consistent once the schedule had simply
-existed, untouched, for a while. This is exactly why the workflow runs 6
-times a night instead of once: one flaky slot doesn't matter when 5 more are
+existed, untouched, for a while. This is exactly why the workflow runs 7
+times a night instead of once: one flaky slot doesn't matter when 6 more are
 coming. The same adjustment period tends to happen again after *any* edit to
 the schedule, not just the first setup. See `CLAUDE.md` if you change it and
 runs seem to go quiet for a bit.
@@ -143,11 +143,15 @@ failure emails alone, which is exactly what this repo ran on for a while.
 
 ## If a run fails
 
-GitHub emails you automatically on any run that starts and fails. Check the
+Each account gets up to 3 attempts within a single run before it's reported
+as failed, so a one-off hiccup (a slow page load, for example) usually
+resolves itself without you ever seeing it. GitHub emails you automatically
+only once a run has actually exhausted its attempts and failed. Check the
 run log first:
 
-- **"redirected to login"**: that account's session expired. Recapture its
-  cookies (step 3 above) and update its secret.
+- **"redirected to login"**: that account's session expired. This one isn't
+  retried (a dead session fails the same way every time), so you'll see it
+  right away. Recapture its cookies (step 3 above) and update its secret.
 - **Anything else**: a screenshot + HTML snapshot of the page at the moment
   of failure are uploaded as a `debug-artifacts` workflow artifact, to help
   figure out what actually happened.

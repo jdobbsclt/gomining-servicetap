@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import sentry_sdk
 from playwright.sync_api import sync_playwright
@@ -12,6 +13,13 @@ DASHBOARD_URL = "https://app.gomining.com/nft-miners"
 BUTTON_SELECTOR = "button:has(icon-broom)"
 DEBUG_DIR = "debug-artifacts"
 MONITOR_SLUG = "gomining-daily-maintenance"
+
+# A single scheduled run may hit a one-off page-load hiccup unrelated to
+# whether the saved session is actually valid. Retrying a couple of times
+# in-process catches those without waiting for the next scheduled run,
+# which on the last attempt of the night could otherwise be ~20 hours away.
+MAX_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 10
 
 # GitHub Actions sets this automatically for every run -- no need to
 # hardcode a repo path, which keeps this script portable to any fork.
@@ -104,51 +112,61 @@ def run_for_account(playwright, label, env_var, cookies_json):
         )
     )
     context.add_cookies(cookies)
-    page = context.new_page()
     success = False
 
     try:
-        page.goto(DASHBOARD_URL, wait_until="networkidle", timeout=30000)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            page = context.new_page()
+            try:
+                page.goto(DASHBOARD_URL, wait_until="networkidle", timeout=30000)
 
-        if "/login" in page.url:
-            report(label, "redirected to login — saved session has expired.")
-            return False
+                if "/login" in page.url:
+                    # A dead session will fail the same way every time --
+                    # retrying wastes time instead of catching a fluke.
+                    report(label, "redirected to login — saved session has expired.")
+                    return False
 
-        button = page.locator(BUTTON_SELECTOR).first
-        button.wait_for(state="attached", timeout=30000)
+                button = page.locator(BUTTON_SELECTOR).first
+                button.wait_for(state="attached", timeout=30000)
 
-        if button.get_attribute("disabled") is not None:
-            print(f"[{label}] OK: maintenance button already on cooldown — nothing to do.")
-            success = True
-            return True
+                if button.get_attribute("disabled") is not None:
+                    print(f"[{label}] OK: maintenance button already on cooldown — nothing to do.")
+                    success = True
+                    return True
 
-        button.click()
-        page.wait_for_timeout(2000)
+                button.click()
+                page.wait_for_timeout(2000)
 
-        if button.get_attribute("disabled") is not None:
-            print(f"[{label}] OK: clicked maintenance button successfully.")
-            success = True
-            return True
+                if button.get_attribute("disabled") is not None:
+                    print(f"[{label}] OK: clicked maintenance button successfully.")
+                    success = True
+                    return True
 
-        report(label, "clicked the button but it never went into cooldown — unclear if it worked.")
-        return False
+                report(label, "clicked the button but it never went into cooldown — unclear if it worked.")
+                return False
 
-    except Exception as exc:
-        print(f"[{label}] FAILED: unexpected error — {exc}")
-        print(f"[{label}] page url at time of failure: {page.url}")
-        if SENTRY_DSN:
-            with sentry_sdk.new_scope() as scope:
-                scope.set_tag("account", label)
-                sentry_sdk.capture_exception(exc)
-        os.makedirs(DEBUG_DIR, exist_ok=True)
-        try:
-            page.screenshot(path=f"{DEBUG_DIR}/{label}-failure.png", full_page=True)
-            with open(f"{DEBUG_DIR}/{label}-failure.html", "w", encoding="utf-8") as f:
-                f.write(page.content())
-            print(f"[{label}] saved debug screenshot + HTML to {DEBUG_DIR}/")
-        except Exception as debug_exc:
-            print(f"[{label}] could not save debug artifacts: {debug_exc}")
-        return False
+            except Exception as exc:
+                if attempt < MAX_ATTEMPTS:
+                    print(f"[{label}] attempt {attempt}/{MAX_ATTEMPTS} hit a transient error ({exc}), retrying in {RETRY_DELAY_SECONDS}s...")
+                    page.close()
+                    time.sleep(RETRY_DELAY_SECONDS)
+                    continue
+
+                print(f"[{label}] FAILED: unexpected error after {MAX_ATTEMPTS} attempts — {exc}")
+                print(f"[{label}] page url at time of failure: {page.url}")
+                if SENTRY_DSN:
+                    with sentry_sdk.new_scope() as scope:
+                        scope.set_tag("account", label)
+                        sentry_sdk.capture_exception(exc)
+                os.makedirs(DEBUG_DIR, exist_ok=True)
+                try:
+                    page.screenshot(path=f"{DEBUG_DIR}/{label}-failure.png", full_page=True)
+                    with open(f"{DEBUG_DIR}/{label}-failure.html", "w", encoding="utf-8") as f:
+                        f.write(page.content())
+                    print(f"[{label}] saved debug screenshot + HTML to {DEBUG_DIR}/")
+                except Exception as debug_exc:
+                    print(f"[{label}] could not save debug artifacts: {debug_exc}")
+                return False
 
     finally:
         if success:
@@ -165,13 +183,15 @@ def main():
             status=MonitorStatus.IN_PROGRESS,
             monitor_config={
                 # Mirrors .github/workflows/maintenance.yml's cron exactly.
-                "schedule": {"type": "crontab", "value": "15 0-5 * * *"},
+                "schedule": {"type": "crontab", "value": "15 23,0-5 * * *"},
                 "timezone": "UTC",
                 # GitHub's scheduler is best-effort and we've directly
                 # observed 45+ min delays -- this must stay looser than
                 # that or Sentry will cry wolf on normal lag.
                 "checkin_margin": 60,
-                "max_runtime": 5,
+                # Retries can now push a real run close to the job-level
+                # timeout (see maintenance.yml); keep headroom above that.
+                "max_runtime": 8,
                 "failure_issue_threshold": 1,
                 "recovery_threshold": 1,
             },

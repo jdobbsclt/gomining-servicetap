@@ -2,22 +2,27 @@ name: Daily Service Button Tap
 
 on:
   schedule:
-    # 6 attempts, hourly, starting when the daily window actually opens
-    # (00:00 UTC = 8:00pm US Eastern, confirmed via GoMining's own FAQ):
-    # 8:15, 9:15, 10:15, 11:15pm, 12:15, 1:15am ET (EDT, UTC-4 — shifts
-    # an hour earlier during EST/winter since GitHub's scheduler doesn't
-    # follow DST).
-    - cron: "15 0-5 * * *"
+    # 7 attempts, hourly, starting an hour before the daily window opens
+    # (00:00 UTC = 8:00pm US Eastern, confirmed via GoMining's own FAQ) as
+    # a buffer, since GitHub's scheduler has been observed missing the
+    # first attempt after the window opens on some nights recently:
+    # 7:15, 8:15, 9:15, 10:15, 11:15pm, 12:15, 1:15am ET (EDT, UTC-4 —
+    # shifts an hour earlier during EST/winter since GitHub's scheduler
+    # doesn't follow DST).
+    - cron: "15 23,0-5 * * *"
   workflow_dispatch: {}
 
 jobs:
   run-maintenance:
     runs-on: ubuntu-latest
-    # Every observed successful run has completed in 47-56s. 3 minutes is
-    # generous headroom over that while keeping the worst-case hang short --
-    # without this, a hung step (e.g. a stuck dependency install) can run
-    # for up to GitHub's 6-hour default before being killed.
-    timeout-minutes: 3
+    # A normal run completes in under a minute, but the script now retries
+    # a struggling account up to 3 times (~30s attempt + 10s wait each)
+    # before giving up, and does this per account. Worst case for 2
+    # accounts is a few minutes; 6 is generous headroom over that while
+    # still keeping the worst-case hang short -- without this, a hung step
+    # (e.g. a stuck dependency install) can run for up to GitHub's 6-hour
+    # default before being killed.
+    timeout-minutes: 6
     steps:
       - name: Check out repo
         uses: actions/checkout@v4
