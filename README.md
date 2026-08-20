@@ -163,6 +163,35 @@ See `CLAUDE.md` for operational gotchas learned the hard way: GitHub's
 editing the cron, its timing is best-effort by design, and there's a
 multi-account `gh` CLI quirk worth knowing about.
 
+## A note on storing session cookies
+
+This automation works by saving your GoMining session cookies (not your
+password) as encrypted GitHub Secrets. Worth understanding what that
+actually means before you set this up:
+
+- **What's protected**: GitHub encrypts secrets at rest and never displays
+  them again once set, not through the website, the API, or any tool,
+  including to you. They only exist as plain text for the few seconds a
+  scheduled run is actually executing, inside GitHub's own cloud runner.
+- **This is not your password**: these cookies grant a *live session*, not
+  your login credentials. Someone who obtained them could act as your
+  logged-in account on GoMining's website for as long as the cookies stay
+  valid, similar to someone stealing a "stay signed in" browser session.
+  They could not log in fresh, change your password, or get past
+  GoMining's own account-recovery process with just these cookies.
+- **Who could actually access them**: only whoever has push access to
+  *your* fork of this repo, since only they could add a workflow step that
+  intentionally reveals a secret's value. In practice, the thing actually
+  worth protecting is your own GitHub account (a strong password and 2FA),
+  not anything specific to this project.
+- **If you ever suspect a leak**: recapture fresh cookies (step 3) and
+  overwrite the old secret right away, treat it like a stolen "remember
+  me" session.
+
+This is a standard risk for any tool that automates a logged-in web
+session on your behalf, it isn't unique to this repo, but you should
+understand it before deciding to use this.
+
 ## A note on GoMining's terms
 
 We read GoMining's [Terms of Use](https://gomining.com/terms) directly to
