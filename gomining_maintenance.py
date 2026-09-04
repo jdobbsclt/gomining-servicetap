@@ -118,7 +118,14 @@ def run_for_account(playwright, label, env_var, cookies_json):
         for attempt in range(1, MAX_ATTEMPTS + 1):
             page = context.new_page()
             try:
-                page.goto(DASHBOARD_URL, wait_until="networkidle", timeout=30000)
+                # "domcontentloaded" (HTML parsed), NOT "networkidle": the
+                # dashboard is a live app that keeps websockets/polling open
+                # for mining stats, so the network never stays idle for the
+                # 500ms "networkidle" wants and page.goto times out even
+                # though the page loaded fine. Readiness is confirmed by the
+                # explicit element waits below instead. (Playwright's own
+                # docs discourage "networkidle" for exactly this reason.)
+                page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=30000)
 
                 if "/login" in page.url:
                     # A dead session will fail the same way every time --
@@ -126,8 +133,28 @@ def run_for_account(playwright, label, env_var, cookies_json):
                     report(label, "redirected to login — saved session has expired.")
                     return False
 
+                # The cookie-consent modal's full-screen overlay can sit on
+                # top of the maintenance button and swallow the click. Dismiss
+                # it if present (a fresh browser context each run means it
+                # usually shows). Best-effort -- never fail the run over it.
+                try:
+                    consent = page.get_by_role(
+                        "button", name="Accept necessary"
+                    ).or_(page.get_by_role("button", name="Accept all"))
+                    consent.first.click(timeout=5000)
+                    print(f"[{label}] dismissed the cookie-consent banner.")
+                except Exception:
+                    pass
+
                 button = page.locator(BUTTON_SELECTOR).first
-                button.wait_for(state="attached", timeout=30000)
+                # "visible", not just "attached": without the networkidle wait
+                # we need a real signal the dashboard has rendered, not just
+                # that the node exists in the DOM.
+                button.wait_for(state="visible", timeout=30000)
+                # Brief settle so the button's cooldown/disabled state has
+                # loaded from the API before we read it below (avoids a race
+                # where it briefly renders enabled on stale/empty state).
+                page.wait_for_timeout(1500)
 
                 if button.get_attribute("disabled") is not None:
                     print(f"[{label}] OK: maintenance button already on cooldown — nothing to do.")
