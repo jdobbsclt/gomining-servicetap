@@ -10,6 +10,15 @@ Automates tapping GoMining's daily "maintenance" button for one or more accounts
 - `REPO` (used for the self-refresh `gh secret set` call) and the account list are both derived at runtime, not hardcoded; see `GITHUB_REPOSITORY` (set automatically by GitHub Actions) and `GOMINING_ACCOUNT_LABELS` in the workflow env. This is what makes the repo fork-portable.
 - Each account gets up to `MAX_ATTEMPTS` (3) tries within a single run, `RETRY_DELAY_SECONDS` (10) apart, before being reported as failed (added 2026-08-20, see "Retry logic" below). The one exception is an explicit `/login` redirect: that's treated as a dead session and returned immediately without retrying, since a rejected session fails identically every time and retrying it just burns ~90 seconds for nothing.
 
+## Page load & readiness — do NOT use `networkidle` (fixed 2026-09-03)
+
+`page.goto()` uses `wait_until="domcontentloaded"` (HTML parsed), deliberately **not** `"networkidle"`. The GoMining dashboard is a live app that holds websocket/polling connections open for mining stats, so the network never goes quiet for the 500ms `"networkidle"` requires — `page.goto` then times out at 30s and the whole attempt fails **even though the page loaded fine**. This caused the 2026-09-03 night failure (PRIMARY struck out all 3 retries with `Page.goto: Timeout 30000ms exceeded ... waiting until "networkidle"`; the debug screenshot showed the page fully rendered with the button already on cooldown). Playwright's own docs also explicitly discourage `"networkidle"`.
+
+Readiness is instead confirmed by explicit waits after the navigation:
+- The cookie-consent modal (`<consent-popup>`, "Accept necessary" / "Accept all" buttons) is dismissed first if present — its full-screen overlay can otherwise intercept the button click. Best-effort, wrapped in `try/except`, never fails the run.
+- `button.wait_for(state="visible", timeout=30000)` — a real "the dashboard rendered" signal, stronger than the old `state="attached"` (node merely exists in the DOM).
+- A `page.wait_for_timeout(1500)` settle so the button's cooldown/disabled state has loaded from the API before it's read (guards a race where it briefly renders enabled on empty state).
+
 ## The reset mechanic (important, learned the hard way)
 
 The maintenance discount resets on a **fixed UTC calendar-day boundary (00:00 UTC)**, not a rolling 24h cooldown from your last click (confirmed via GoMining's own FAQ: https://help.nft.gomining.com/faq/maintenance-fees-and-discounts). The countdown timer shown in the UI is always counting down to the *same* daily reset point, not to "24h after you clicked." **Missing an entire UTC day resets the whole accumulated discount streak to zero**, not just that day's increment, so reliability matters more than it might first appear.
