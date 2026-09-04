@@ -137,6 +137,26 @@ expected window, closing that gap.
 If you skip this, everything still works, you just rely on GitHub's
 failure emails alone, which is exactly what this repo ran on for a while.
 
+## Staying up to date
+
+This repo gets occasional fixes. Your fork **does not update itself** — pull
+changes when you want them:
+
+- **One-off:** open your fork on GitHub and click **Sync fork** on the main
+  page. It shows "This branch is N commits behind" when there's something to
+  pull, and merges automatically unless you've edited the same lines an
+  update also changes (you edited the `env:` block of
+  `.github/workflows/maintenance.yml` during setup, so if an update also
+  touches that file, GitHub may ask you to merge it by hand — usually a
+  quick, non-overlapping merge).
+- **Get notified:** on
+  [the upstream repo](https://github.com/jdobbsclt/gomining-servicetap),
+  click **Watch → Custom → Releases** so GitHub emails you when a new
+  version ships.
+
+Updates only ever change the script and docs (and occasionally the schedule
+in `maintenance.yml`) — never your GitHub Secrets.
+
 ## If a run fails
 
 Each account gets up to 3 attempts within a single run before it's reported
