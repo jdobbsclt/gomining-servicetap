@@ -88,6 +88,20 @@ Optional, wired in `gomining_maintenance.py` guarded by `if SENTRY_DSN:`. Two th
 - **Known gap**: Sentry only starts once the Python script runs; a hang in "Install dependencies" (like the 2026-08-17 incident above) happens *before* that, so it produces no Sentry error, only an eventual server-side MISSED alert once `checkin_margin` (60 min) elapses. The step-level timeout above is the actual mitigation for that specific failure mode, not Sentry.
 - Org: `gomining-service-button`, a dedicated Sentry org, kept separate from other unrelated projects on the same Sentry login (one login, multiple orgs, no reconnection needed to switch between them).
 
+## Releases — cut one after every substantive merge
+
+**After any substantive change merges to `main`** (a fix, a new capability — anything a forker would want), **cut the next release before considering the work done.** No formal semver; just sequential `vN` checkpoints. From an up-to-date `main`:
+
+```
+git tag -a vN -m "vN — <one-line summary>" <merge-commit-sha>
+git push origin vN
+gh release create vN --verify-tag --title "vN — <short title>" --notes "<bulleted what-changed-and-why>"
+```
+
+Match the notes style of the existing releases (run `gh release view` on the latest to see it): a short intro line, then plain bullets aimed at someone deciding whether to pull it.
+
+Why it's not optional: forks have no other update signal. `README.md`'s "Staying up to date" section points forkers at **Watch → Releases**, and nobody watches raw commits — a merge with no release is invisible to them. The releases double as the project's only changelog. `gh release list` shows the history.
+
 ## If a scheduled run fails
 
 GitHub emails on failure, and (if `SENTRY_DSN` is set) so does Sentry's default high-priority-issue alert rule — so a "session expired" shouldn't sit unnoticed as long as Sentry email notifications are on for your account. Check the run log first: a `[LABEL] FAILED: session expired` line means that account's saved session is dead — run `python recapture.py <LABEL>` (or use the `capture-cookies` skill). GoMining invalidates sessions on their side periodically, so this is expected occasionally, not a bug. Failures from any *other* cause also upload a screenshot + HTML snapshot as a workflow artifact (`debug-artifacts`); a "session expired" return does not (it's self-explanatory, and skips straight past the artifact-saving path).
