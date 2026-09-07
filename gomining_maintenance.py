@@ -38,13 +38,16 @@ if SENTRY_DSN:
         include_local_variables=False,
     )
 
-# Cookie names worth keeping when saving a session. Excludes marketing/
-# analytics cookies (utm_*, _ga, _fbp, hotjar, etc.) that don't matter
-# for auth and just add noise.
-KEEP_COOKIE_NAMES = [
-    "cf_clearance", "brwsr", "irtps", "access_token", "refresh_token",
-    "sa-user-id", "sa-user-id-v2", "sa-user-id-v3", "viewport",
-]
+# Session cookies to persist when saving a session; everything else
+# (marketing/analytics -- utm_*, _ga, ajs_*, intercom-*, posthog, etc.)
+# is auth-irrelevant noise. As of 2026-09-06 GoMining's login sets just
+# these three. The older set (brwsr, irtps, sa-user-id*, viewport) was
+# dropped on their side, and that change invalidated every existing
+# session at once -- forcing a full re-capture (see recapture.py). Note
+# access_token is a ~1h JWT; refresh_token is long-lived but rotates on
+# use, which is why every successful run re-saves the live cookies (see
+# persist_refreshed_cookies).
+KEEP_COOKIE_NAMES = ["access_token", "refresh_token", "cf_clearance"]
 
 # Which accounts to run, driven by GOMINING_ACCOUNT_LABELS (comma-separated,
 # e.g. "PRIMARY,SECONDARY") so forks can run 1 or N accounts without touching this
@@ -127,12 +130,6 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 # docs discourage "networkidle" for exactly this reason.)
                 page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=30000)
 
-                if "/login" in page.url:
-                    # A dead session will fail the same way every time --
-                    # retrying wastes time instead of catching a fluke.
-                    report(label, "redirected to login — saved session has expired.")
-                    return False
-
                 # The cookie-consent modal's full-screen overlay can sit on
                 # top of the maintenance button and swallow the click. Dismiss
                 # it if present (a fresh browser context each run means it
@@ -146,14 +143,35 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 except Exception:
                     pass
 
+                # Is the saved session still good? GoMining no longer
+                # redirects a logged-out visitor to /login -- it renders its
+                # marketing/signup page at the same URL. So wait for EITHER
+                # the maintenance button (logged in) OR the signup page's
+                # hero text (logged out), whichever appears first, then check
+                # which one we actually got. "visible" (not just "attached")
+                # is also the real "dashboard has rendered" signal, since we
+                # don't wait on networkidle.
                 button = page.locator(BUTTON_SELECTOR).first
-                # "visible", not just "attached": without the networkidle wait
-                # we need a real signal the dashboard has rendered, not just
-                # that the node exists in the DOM.
-                button.wait_for(state="visible", timeout=30000)
-                # Brief settle so the button's cooldown/disabled state has
-                # loaded from the API before we read it below (avoids a race
-                # where it briefly renders enabled on stale/empty state).
+                signed_out = page.get_by_text("Grow your mining farm").or_(
+                    page.get_by_text("Already have an account")
+                ).first
+                button.or_(signed_out).first.wait_for(state="visible", timeout=30000)
+
+                if signed_out.is_visible() or "/login" in page.url:
+                    # A dead session fails identically on every retry --
+                    # return now instead of burning the remaining attempts.
+                    # report() mirrors this to Sentry, where an alert rule
+                    # turns it into an email.
+                    report(label, "session expired -- GoMining served its signup page "
+                                  "instead of the dashboard. Re-capture cookies "
+                                  "(capture-cookies skill / recapture.py).")
+                    return False
+
+                # Logged in: the maintenance button is the element that
+                # became visible. Brief settle so its cooldown/disabled
+                # state has loaded from the API before we read it below
+                # (avoids a race where it briefly renders enabled on
+                # stale/empty state).
                 page.wait_for_timeout(1500)
 
                 if button.get_attribute("disabled") is not None:
