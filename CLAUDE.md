@@ -5,10 +5,10 @@ Automates tapping GoMining's daily "maintenance" button for one or more accounts
 ## How it works
 
 - `gomining_maintenance.py`: for each configured account, loads that account's saved session cookies into a headless Playwright browser, opens the dashboard, and clicks the maintenance button (selector: `button:has(icon-broom)`, a broom icon that's GoMining's own icon for this button) if it's not already on cooldown.
-- No passwords are ever stored. Auth is via session cookies captured through a one-time live login (see the `capture-cookies` skill).
-- After every successful run, the script re-saves that account's current cookies back to its GitHub secret (`persist_refreshed_cookies()`). **This is required, not optional**: GoMining rotates its `refresh_token` on use, so a static cookie saved once will work exactly once and then permanently fail with a login redirect.
+- No passwords are ever stored. Auth is via session cookies captured through a one-time live login — run `recapture.py`, or use the `capture-cookies` skill.
+- After every successful run, the script re-saves that account's current cookies back to its GitHub secret (`persist_refreshed_cookies()`). **This is required, not optional**: GoMining rotates its `refresh_token` on use, so a static cookie saved once will work exactly once and then permanently fail.
 - `REPO` (used for the self-refresh `gh secret set` call) and the account list are both derived at runtime, not hardcoded; see `GITHUB_REPOSITORY` (set automatically by GitHub Actions) and `GOMINING_ACCOUNT_LABELS` in the workflow env. This is what makes the repo fork-portable.
-- Each account gets up to `MAX_ATTEMPTS` (3) tries within a single run, `RETRY_DELAY_SECONDS` (10) apart, before being reported as failed (added 2026-08-20, see "Retry logic" below). The one exception is an explicit `/login` redirect: that's treated as a dead session and returned immediately without retrying, since a rejected session fails identically every time and retrying it just burns ~90 seconds for nothing.
+- Each account gets up to `MAX_ATTEMPTS` (3) tries within a single run, `RETRY_DELAY_SECONDS` (10) apart, before being reported as failed (added 2026-08-20, see "Retry logic" below). The one exception is a detected dead session (see "Session-expiry detection" below): that's returned immediately without retrying, since a rejected session fails identically every time and retrying it just burns ~90 seconds for nothing.
 
 ## Page load & readiness — do NOT use `networkidle` (fixed 2026-09-03)
 
@@ -16,8 +16,21 @@ Automates tapping GoMining's daily "maintenance" button for one or more accounts
 
 Readiness is instead confirmed by explicit waits after the navigation:
 - The cookie-consent modal (`<consent-popup>`, "Accept necessary" / "Accept all" buttons) is dismissed first if present — its full-screen overlay can otherwise intercept the button click. Best-effort, wrapped in `try/except`, never fails the run.
-- `button.wait_for(state="visible", timeout=30000)` — a real "the dashboard rendered" signal, stronger than the old `state="attached"` (node merely exists in the DOM).
+- `button.wait_for(state="visible", timeout=30000)` — a real "dashboard rendered" signal, stronger than the old `state="attached"`. On timeout it distinguishes a dead session from a genuine load failure (see "Session-expiry detection" below).
 - A `page.wait_for_timeout(1500)` settle so the button's cooldown/disabled state has loaded from the API before it's read (guards a race where it briefly renders enabled on empty state).
+
+## Session-expiry detection (fixed 2026-09-06)
+
+**GoMining changed two things on their side around 2026-09-06, both of which broke the automation the same night (both accounts, ~18h after a good run):**
+
+1. **The auth cookie set shrank from 9 names to 3.** It's now just `access_token` (a ~1h JWT), `refresh_token` (long-lived, rotates on use), and `cf_clearance`. The old `brwsr` / `irtps` / `sa-user-id*` / `viewport` cookies are gone. That change invalidated every existing saved session at once and forced a full re-capture. `KEEP_COOKIE_NAMES` in `gomining_maintenance.py` (and the same list in `recapture.py` and the `capture-cookies` skill) was trimmed to match — keep all three in sync.
+2. **A logged-out visitor is no longer redirected to `/login`.** GoMining now renders a "guest" stub of the miners page (`<h1 class="nft-page-stub__guest-title">Grow your mining farm</h1>`) at the same `/nft-miners` URL. The old `if "/login" in page.url` check never fired, so a dead session degraded into a full ~5-minute retry grind (3 attempts × 2 accounts) ending in a vague failure email.
+
+**Detection now:** `button.wait_for(state="visible", timeout=30000)` as before, but wrapped so that on `TimeoutError` it checks whether `.nft-page-stub__guest-title` is visible (or the URL still contains `/login`). If so → `report(label, "session expired -- ...")` and `return False` immediately, no retry. If not → `raise`, and the normal retry loop handles it as a genuine load failure. **Do not check for the guest stub before the button times out:** that same stub flashes for a second or two on every *normal* logged-in load while the session validates, so an instant check false-positives (learned the hard way — a first attempt at this shipped a racy `button.or_(signed_out)` check and every run reported "session expired" even with perfectly good cookies). Cost of the corrected version: a real dead session takes ~30s per account (one button-wait timeout) instead of the old ~2 min, still far better than the pre-fix 5 min.
+
+`report()` sends the message to Sentry at `level="error"`, which Sentry files as a high-priority issue — and the project's default alert rule ("Send a notification for high priority issues", emails active members) turns that into an email. So a "session expired" run notifies without any bespoke alert config; just make sure Sentry email notifications are on for your account.
+
+**Recovery:** `python recapture.py` (both accounts) or `python recapture.py <LABEL>` (one). It opens a headed browser, the owner logs in via "Continue with Google", and it pushes the fresh cookies straight to the `GOMINING_COOKIES_<LABEL>` secret. The `capture-cookies` skill is the Claude-driven equivalent for when the user can't run the script themselves.
 
 ## The reset mechanic (important, learned the hard way)
 
@@ -40,7 +53,7 @@ The maintenance discount resets on a **fixed UTC calendar-day boundary (00:00 UT
 
 A real incident exposed a gap: one account hit an ordinary page-load timeout (`Page.goto`/`Locator.wait_for` exceeding 30s, nothing to do with the saved session's validity) on the *last* scheduled attempt of the night. Because a failed run never refreshes that account's cookies, and the next scheduled attempt was ~20 hours away (the following night's window), those cookies just sat idle far longer than they normally do between refreshes, and by the next attempt the session had genuinely gone stale (redirected to `/login` for real). One transient, unrelated-to-auth hiccup snowballed into a real dead session purely because of *when* it happened to occur.
 
-Fix: `run_for_account()` now retries the navigate-and-click sequence up to `MAX_ATTEMPTS` (3) times in-process, `RETRY_DELAY_SECONDS` (10s) apart, before giving up. This catches short-lived hiccups (slow page load, flaky network) within the same run instead of losing an entire day to them. It deliberately does *not* apply to the explicit `/login`-redirect case, that's a real dead session, not a fluke, and retrying it 3 times just wastes ~90 seconds confirming what we already know.
+Fix: `run_for_account()` now retries the navigate-and-click sequence up to `MAX_ATTEMPTS` (3) times in-process, `RETRY_DELAY_SECONDS` (10s) apart, before giving up. This catches short-lived hiccups (slow page load, flaky network) within the same run instead of losing an entire day to them. It deliberately does *not* apply to a detected dead session (see "Session-expiry detection") — that's real, not a fluke, and retrying it 3 times just wastes ~90 seconds confirming what we already know.
 
 Knock-on effects of this change, all already applied:
 - Job-level `timeout-minutes` in `maintenance.yml` bumped 3 → 6 to cover the new worst-case (2 accounts, both retrying the full 3 attempts).
@@ -53,7 +66,7 @@ If you have more than one `gh` login on your machine and `git push` / `gh` comma
 
 ## Secrets in this repo
 
-- `GOMINING_COOKIES_<LABEL>` (one per account in `GOMINING_ACCOUNT_LABELS`): session cookies (JSON array), self-refreshed by the script every run. See the `capture-cookies` skill to re-capture from scratch.
+- `GOMINING_COOKIES_<LABEL>` (one per account in `GOMINING_ACCOUNT_LABELS`): session cookies (JSON array), self-refreshed by the script every run. Run `recapture.py` (or the `capture-cookies` skill) to re-capture from scratch after a "session expired".
 - `GH_PAT_SECRETS_WRITE`: fine-grained PAT scoped to only this repo, Secrets: read/write, nothing else. Used by the script to call `gh secret set` and self-refresh the cookie secrets above.
 - `SENTRY_DSN`: optional. Script and workflow both run fine without it (guarded by `if SENTRY_DSN:` throughout); just no Sentry visibility if unset.
 
@@ -75,6 +88,20 @@ Optional, wired in `gomining_maintenance.py` guarded by `if SENTRY_DSN:`. Two th
 - **Known gap**: Sentry only starts once the Python script runs; a hang in "Install dependencies" (like the 2026-08-17 incident above) happens *before* that, so it produces no Sentry error, only an eventual server-side MISSED alert once `checkin_margin` (60 min) elapses. The step-level timeout above is the actual mitigation for that specific failure mode, not Sentry.
 - Org: `gomining-service-button`, a dedicated Sentry org, kept separate from other unrelated projects on the same Sentry login (one login, multiple orgs, no reconnection needed to switch between them).
 
+## Releases — cut one after every substantive merge
+
+**After any substantive change merges to `main`** (a fix, a new capability — anything a forker would want), **cut the next release before considering the work done.** No formal semver; just sequential `vN` checkpoints. From an up-to-date `main`:
+
+```
+git tag -a vN -m "vN — <one-line summary>" <merge-commit-sha>
+git push origin vN
+gh release create vN --verify-tag --title "vN — <short title>" --notes "<bulleted what-changed-and-why>"
+```
+
+Match the notes style of the existing releases (run `gh release view` on the latest to see it): a short intro line, then plain bullets aimed at someone deciding whether to pull it.
+
+Why it's not optional: forks have no other update signal. `README.md`'s "Staying up to date" section points forkers at **Watch → Releases**, and nobody watches raw commits — a merge with no release is invisible to them. The releases double as the project's only changelog. `gh release list` shows the history.
+
 ## If a scheduled run fails
 
-GitHub emails on failure. Check the run log first: "redirected to login" means a session expired; use the `capture-cookies` skill for that account. Failures also upload a screenshot + HTML snapshot as a workflow artifact (`debug-artifacts`) for anything less obvious. If `SENTRY_DSN` is set, also check the Sentry project for grouped/historical error data.
+GitHub emails on failure, and (if `SENTRY_DSN` is set) so does Sentry's default high-priority-issue alert rule — so a "session expired" shouldn't sit unnoticed as long as Sentry email notifications are on for your account. Check the run log first: a `[LABEL] FAILED: session expired` line means that account's saved session is dead — run `python recapture.py <LABEL>` (or use the `capture-cookies` skill). GoMining invalidates sessions on their side periodically, so this is expected occasionally, not a bug. Failures from any *other* cause also upload a screenshot + HTML snapshot as a workflow artifact (`debug-artifacts`); a "session expired" return does not (it's self-explanatory, and skips straight past the artifact-saving path).

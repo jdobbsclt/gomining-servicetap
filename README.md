@@ -67,6 +67,13 @@ env:
 You never enter your GoMining password anywhere in this repo or its
 secrets, only session cookies, captured from a real logged-in browser.
 
+**Easiest — `recapture.py`:** run `python recapture.py` (needs `pip install
+playwright && playwright install chromium`, and `gh` logged in). A browser
+opens; you log in with "Continue with Google"; it saves the session to the
+right GitHub secret automatically. Do all accounts at once, or name one:
+`python recapture.py SECONDARY`. This is also the fix to run whenever a
+scheduled run reports "session expired".
+
 **If you're using Claude Code:** this repo ships a `capture-cookies` skill
 (`.claude/skills/capture-cookies/SKILL.md`) that walks Claude through doing
 this for you interactively. Just ask it to capture cookies for an account.
@@ -75,9 +82,8 @@ this for you interactively. Just ask it to capture cookies for an account.
 1. Log into <https://app.gomining.com> normally
 2. Open DevTools (F12) → **Application** tab → **Storage → Cookies** →
    `https://app.gomining.com`
-3. Note the values for these cookie names: `cf_clearance`, `brwsr`,
-   `irtps`, `access_token`, `refresh_token`, `sa-user-id`, `sa-user-id-v2`,
-   `sa-user-id-v3`, `viewport`
+3. Note the values for these three cookie names: `access_token`,
+   `refresh_token`, `cf_clearance`
 4. Build a JSON array from them, one object per cookie, matching this shape:
    ```json
    [{"name": "access_token", "value": "...", "domain": ".gomining.com", "path": "/", "expires": 1234567890, "httpOnly": false, "secure": true, "sameSite": "Lax"}]
@@ -165,9 +171,12 @@ resolves itself without you ever seeing it. GitHub emails you automatically
 only once a run has actually exhausted its attempts and failed. Check the
 run log first:
 
-- **"redirected to login"**: that account's session expired. This one isn't
-  retried (a dead session fails the same way every time), so you'll see it
-  right away. Recapture its cookies (step 3 above) and update its secret.
+- **"session expired"**: that account's saved session is dead — GoMining
+  served its signup page instead of the dashboard. This isn't retried (a
+  dead session fails the same way every time), so you'll see it right away.
+  Fix: `python recapture.py <LABEL>` (or step 3 above). GoMining invalidates
+  sessions on their side from time to time, so this is expected occasionally
+  and isn't a bug.
 - **Anything else**: a screenshot + HTML snapshot of the page at the moment
   of failure are uploaded as a `debug-artifacts` workflow artifact, to help
   figure out what actually happened.
