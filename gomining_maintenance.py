@@ -5,6 +5,7 @@ import sys
 import time
 
 import sentry_sdk
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 from sentry_sdk.crons import capture_checkin
 from sentry_sdk.crons.consts import MonitorStatus
@@ -143,35 +144,37 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 except Exception:
                     pass
 
-                # Is the saved session still good? GoMining no longer
-                # redirects a logged-out visitor to /login -- it renders its
-                # marketing/signup page at the same URL. So wait for EITHER
-                # the maintenance button (logged in) OR the signup page's
-                # hero text (logged out), whichever appears first, then check
-                # which one we actually got. "visible" (not just "attached")
-                # is also the real "dashboard has rendered" signal, since we
-                # don't wait on networkidle.
+                # Wait for the maintenance button. "visible" (not just
+                # "attached") is the real "dashboard has rendered" signal,
+                # since we don't wait on networkidle.
+                #
+                # If it never comes, work out *why* before deciding to
+                # retry: GoMining no longer redirects a logged-out visitor
+                # to /login -- it renders a "guest" stub of this page
+                # (`.nft-page-stub__guest-title`, "Grow your mining farm")
+                # at the same URL. That stub ALSO flashes briefly on a
+                # normal logged-in load before the session validates, which
+                # is why we only check for it *after* the button wait times
+                # out -- by then a real dashboard would have rendered.
                 button = page.locator(BUTTON_SELECTOR).first
-                signed_out = page.get_by_text("Grow your mining farm").or_(
-                    page.get_by_text("Already have an account")
-                ).first
-                button.or_(signed_out).first.wait_for(state="visible", timeout=30000)
+                try:
+                    button.wait_for(state="visible", timeout=30000)
+                except PlaywrightTimeoutError:
+                    guest_stub = page.locator(".nft-page-stub__guest-title")
+                    if guest_stub.is_visible() or "/login" in page.url:
+                        # Dead session -- fails identically on every retry,
+                        # so return now instead of burning the rest.
+                        # report() mirrors this to Sentry, where an alert
+                        # rule turns it into an email.
+                        report(label, "session expired -- GoMining served its guest / "
+                                      "signup page instead of the dashboard. Re-capture "
+                                      "cookies (recapture.py / capture-cookies skill).")
+                        return False
+                    raise  # genuine load failure -- let the retry loop handle it
 
-                if signed_out.is_visible() or "/login" in page.url:
-                    # A dead session fails identically on every retry --
-                    # return now instead of burning the remaining attempts.
-                    # report() mirrors this to Sentry, where an alert rule
-                    # turns it into an email.
-                    report(label, "session expired -- GoMining served its signup page "
-                                  "instead of the dashboard. Re-capture cookies "
-                                  "(capture-cookies skill / recapture.py).")
-                    return False
-
-                # Logged in: the maintenance button is the element that
-                # became visible. Brief settle so its cooldown/disabled
-                # state has loaded from the API before we read it below
-                # (avoids a race where it briefly renders enabled on
-                # stale/empty state).
+                # Brief settle so the button's cooldown/disabled state has
+                # loaded from the API before we read it below (avoids a race
+                # where it briefly renders enabled on stale/empty state).
                 page.wait_for_timeout(1500)
 
                 if button.get_attribute("disabled") is not None:
