@@ -177,6 +177,12 @@ run log first:
   Fix: `python recapture.py <LABEL>` (or step 3 above). GoMining invalidates
   sessions on their side from time to time, so this is expected occasionally
   and isn't a bug.
+- **"session expired" right after you turned on 2FA** (on your GoMining
+  account *or* the Google account you sign in with): expected, and only once.
+  Enabling 2FA invalidates existing sessions as a security measure. Run
+  `python recapture.py` once — you complete the new 2FA step yourself in the
+  browser — and every run after that is back to normal. The nightly tap never
+  logs in (it reuses a saved session), so 2FA has no ongoing effect on it.
 - **Anything else**: a screenshot + HTML snapshot of the page at the moment
   of failure are uploaded as a `debug-artifacts` workflow artifact, to help
   figure out what actually happened.

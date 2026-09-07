@@ -32,6 +32,8 @@ Readiness is instead confirmed by explicit waits after the navigation:
 
 **Recovery:** `python recapture.py` (both accounts) or `python recapture.py <LABEL>` (one). It opens a headed browser, the owner logs in via "Continue with Google", and it pushes the fresh cookies straight to the `GOMINING_COOKIES_<LABEL>` secret. The `capture-cookies` skill is the Claude-driven equivalent for when the user can't run the script themselves.
 
+**2FA and this automation:** enabling 2FA (on the GoMining account or the Google account it signs in with) does **not** affect the nightly run on an ongoing basis — the run reuses a saved session and never hits a login form, so no 2FA prompt is ever reached. It will, however, invalidate the current session *once* when first turned on, producing a single "session expired" run; `recapture.py` fixes it and subsequent runs are normal. The only thing 2FA genuinely rules out is *fully scripting* the re-login step, which is manual by design anyway.
+
 ## The reset mechanic (important, learned the hard way)
 
 The maintenance discount resets on a **fixed UTC calendar-day boundary (00:00 UTC)**, not a rolling 24h cooldown from your last click (confirmed via GoMining's own FAQ: https://help.nft.gomining.com/faq/maintenance-fees-and-discounts). The countdown timer shown in the UI is always counting down to the *same* daily reset point, not to "24h after you clicked." **Missing an entire UTC day resets the whole accumulated discount streak to zero**, not just that day's increment, so reliability matters more than it might first appear.
