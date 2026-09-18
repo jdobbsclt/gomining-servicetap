@@ -8,18 +8,9 @@ disable-model-invocation: true
 
 This repo's automation authenticates via saved session cookies, not passwords (see `CLAUDE.md`). When a session dies (a "session expired" line in a run log — or the page showing GoMining's signup screen instead of the dashboard), get a fresh one and update the corresponding GitHub secret. This must be done live, with the actual account owner present — only they can complete the Google login step; you never see or ask for their password or 2FA code.
 
-## Preferred path: `recapture.py`
+## Procedure (Playwright MCP)
 
-If the user is at their own machine and just wants this fixed, point them at the repo's `recapture.py` — it does everything below in one command:
-
-```
-python recapture.py                 # both accounts
-python recapture.py SECONDARY        # just one
-```
-
-It needs `playwright` + chromium installed locally and `gh` logged in with push access. Use the manual procedure below only when driving it yourself through the Playwright MCP (e.g. the user can see the browser you control but can't run the script).
-
-## Manual procedure (Playwright MCP)
+There used to be a standalone `recapture.py` script the user could run themselves. It's been removed: Google reliably blocks automated ("Continue with Google") logins driven by a script — "This browser or app may not be secure" — as a deliberate anti-automation policy, not a fixable bug. Driving a visible browser through the Playwright MCP yourself, with the user completing only the login step, is the working replacement and is now the only supported path.
 
 1. Confirm which account needs recapturing if not already clear — check `GOMINING_ACCOUNT_LABELS` in `.github/workflows/maintenance.yml` for the configured labels (e.g. `MAIN` → secret `GOMINING_COOKIES_MAIN`).
 2. Open a live browser to the login page: `mcp__playwright__browser_navigate` → `https://app.gomining.com/login`. If the browser might still hold a previous session's cookies (recapturing a second account in the same session), clear them first via `browser_run_code_unsafe`: `await page.context().clearCookies()`, then navigate again.
@@ -35,7 +26,7 @@ It needs `playwright` + chromium installed locally and `gh` logged in with push 
        .map(c => Object.fromEntries(fields.map(f => [f, c[f]])));
    }
    ```
-   A healthy capture has all three names, including `access_token` and `refresh_token`. (GoMining's cookie set changed on 2026-09-06 — the older `brwsr` / `irtps` / `sa-user-id*` / `viewport` cookies are gone. Keep this list in sync with `KEEP_COOKIE_NAMES` in `gomining_maintenance.py` and `recapture.py`.)
+   A healthy capture has all three names, including `access_token` and `refresh_token`. (GoMining's cookie set changed on 2026-09-06 — the older `brwsr` / `irtps` / `sa-user-id*` / `viewport` cookies are gone. Keep this list in sync with `KEEP_COOKIE_NAMES` in `gomining_maintenance.py`.)
 6. Save the returned JSON array to a local scratch file (never inside this repo — it must never be committed) using the session's scratchpad directory, then push it straight to the secret (from inside the repo directory so `gh` infers the repo from the git remote):
    ```
    gh secret set GOMINING_COOKIES_<LABEL> < <scratch-file-path>

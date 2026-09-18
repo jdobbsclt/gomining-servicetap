@@ -67,16 +67,19 @@ env:
 You never enter your GoMining password anywhere in this repo or its
 secrets, only session cookies, captured from a real logged-in browser.
 
-**Easiest — `recapture.py`:** run `python recapture.py` (needs `pip install
-playwright && playwright install chromium`, and `gh` logged in). A browser
-opens; you log in with "Continue with Google"; it saves the session to the
-right GitHub secret automatically. Do all accounts at once, or name one:
-`python recapture.py SECONDARY`. This is also the fix to run whenever a
-scheduled run reports "session expired".
+**If you're using Claude Code (recommended):** this repo ships a
+`capture-cookies` skill (`.claude/skills/capture-cookies/SKILL.md`) that
+walks Claude through doing this for you interactively — it drives a real,
+visible browser, you complete the "Continue with Google" login yourself,
+and Claude pushes the resulting session straight to the right GitHub
+secret. Just ask Claude to capture cookies for an account. This is also
+the fix to run whenever a scheduled run reports "session expired".
 
-**If you're using Claude Code:** this repo ships a `capture-cookies` skill
-(`.claude/skills/capture-cookies/SKILL.md`) that walks Claude through doing
-this for you interactively. Just ask it to capture cookies for an account.
+Note: a standalone scripted version of this (`recapture.py`) used to ship
+in this repo, but Google now reliably blocks automated ("Continue with
+Google") logins driven by a script with "This browser or app may not be
+secure" — it's a deliberate Google anti-automation policy, not something
+worth working around client-side. The script was removed for that reason.
 
 **Manual method (any browser):**
 1. Log into <https://app.gomining.com> normally
@@ -174,15 +177,16 @@ run log first:
 - **"session expired"**: that account's saved session is dead — GoMining
   served its signup page instead of the dashboard. This isn't retried (a
   dead session fails the same way every time), so you'll see it right away.
-  Fix: `python recapture.py <LABEL>` (or step 3 above). GoMining invalidates
-  sessions on their side from time to time, so this is expected occasionally
-  and isn't a bug.
+  Fix: re-capture cookies for that account (step 3 above — the
+  `capture-cookies` skill, or the manual DevTools method). GoMining
+  invalidates sessions on their side from time to time, so this is expected
+  occasionally and isn't a bug.
 - **"session expired" right after you turned on 2FA** (on your GoMining
   account *or* the Google account you sign in with): expected, and only once.
-  Enabling 2FA invalidates existing sessions as a security measure. Run
-  `python recapture.py` once — you complete the new 2FA step yourself in the
-  browser — and every run after that is back to normal. The nightly tap never
-  logs in (it reuses a saved session), so 2FA has no ongoing effect on it.
+  Enabling 2FA invalidates existing sessions as a security measure. Re-capture
+  cookies once — you complete the new 2FA step yourself in the browser — and
+  every run after that is back to normal. The nightly tap never logs in (it
+  reuses a saved session), so 2FA has no ongoing effect on it.
 - **Anything else**: a screenshot + HTML snapshot of the page at the moment
   of failure are uploaded as a `debug-artifacts` workflow artifact, to help
   figure out what actually happened.

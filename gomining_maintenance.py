@@ -44,7 +44,8 @@ if SENTRY_DSN:
 # is auth-irrelevant noise. As of 2026-09-06 GoMining's login sets just
 # these three. The older set (brwsr, irtps, sa-user-id*, viewport) was
 # dropped on their side, and that change invalidated every existing
-# session at once -- forcing a full re-capture (see recapture.py). Note
+# session at once -- forcing a full re-capture (see the capture-cookies
+# skill). Note
 # access_token is a ~1h JWT; refresh_token is long-lived but rotates on
 # use, which is why every successful run re-saves the live cookies (see
 # persist_refreshed_cookies).
@@ -168,7 +169,7 @@ def run_for_account(playwright, label, env_var, cookies_json):
                         # rule turns it into an email.
                         report(label, "session expired -- GoMining served its guest / "
                                       "signup page instead of the dashboard. Re-capture "
-                                      "cookies (recapture.py / capture-cookies skill).")
+                                      "cookies (capture-cookies skill).")
                         return False
                     raise  # genuine load failure -- let the retry loop handle it
 
