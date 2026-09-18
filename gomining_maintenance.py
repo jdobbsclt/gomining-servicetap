@@ -70,8 +70,14 @@ def persist_refreshed_cookies(label, env_var, context):
 
     The site appears to rotate its refresh token on use — the first
     time a saved session is used to silently renew, the old refresh
-    token stops working. Re-saving the live cookies after every
-    successful run keeps the stored secret from ever going stale.
+    token stops working. Called whenever the session was confirmed
+    authenticated during this run, not only on a fully successful
+    tap: the rotation happens on page load (see `authenticated` in
+    run_for_account), so a run that authenticates fine but then fails
+    for an unrelated reason (the click never registers, a later retry
+    hits a load error) would otherwise strand the newly-rotated
+    cookies in memory and leave the stored secret one rotation behind
+    — dead the next time it's used.
     """
     if not os.environ.get("GH_TOKEN"):
         print(f"[{label}] skipping secret refresh — no GH_TOKEN available (expected when testing locally).")
@@ -118,6 +124,11 @@ def run_for_account(playwright, label, env_var, cookies_json):
     )
     context.add_cookies(cookies)
     success = False
+    # True as soon as the dashboard renders for a real logged-in session
+    # (not the guest stub) — the earliest point the cookie rotation from
+    # persist_refreshed_cookies is safe to save, independent of whether
+    # the button click itself goes on to succeed.
+    authenticated = False
 
     try:
         for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -173,6 +184,11 @@ def run_for_account(playwright, label, env_var, cookies_json):
                         return False
                     raise  # genuine load failure -- let the retry loop handle it
 
+                # Confirmed authenticated (real dashboard, not the guest
+                # stub) -- safe to persist cookies in `finally` even if
+                # everything past this point still ends up failing.
+                authenticated = True
+
                 # Brief settle so the button's cooldown/disabled state has
                 # loaded from the API before we read it below (avoids a race
                 # where it briefly renders enabled on stale/empty state).
@@ -218,7 +234,7 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 return False
 
     finally:
-        if success:
+        if authenticated:
             persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
