@@ -12,6 +12,15 @@ on:
     - cron: "15 23,0-5 * * *"
   workflow_dispatch: {}
 
+# Never let two runs overlap. GoMining rotates the refresh token on every use,
+# so a second run starting from the same saved cookies (a manual dispatch during
+# the nightly window, or a slow run bleeding into the next slot) could find its
+# token already swapped and kill the session. cancel-in-progress is false so a
+# running tap is never interrupted; a waiting run just queues behind it.
+concurrency:
+  group: gomining-session
+  cancel-in-progress: false
+
 jobs:
   run-maintenance:
     runs-on: ubuntu-latest
@@ -52,6 +61,13 @@ jobs:
           GOMINING_COOKIES_PRIMARY: ${{ secrets.GOMINING_COOKIES_PRIMARY }}
           GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
           GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+          # Optional -- publish the platform-wide Mining mode discount (read
+          # from the dashboard's own data) to a public calculator's
+          # mining-mode.json. CALC_REPO_TOKEN is a separate fine-grained PAT:
+          # Contents read/write on that one repo, nothing else. Leave both
+          # unset (as in a fork) and the whole feature is skipped.
+          CALC_REPO: jdobbsclt/gomining-flywheel-calculator
+          CALC_REPO_TOKEN: ${{ secrets.CALC_REPO_TOKEN }}
           # Optional -- error monitoring + cron check-ins. Script runs fine
           # without this secret set, just with no Sentry visibility.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
