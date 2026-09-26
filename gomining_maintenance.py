@@ -133,6 +133,29 @@ def persist_refreshed_cookies(label, env_var, context):
         print(f"[{label}] WARNING: could not refresh {env_var} — {exc}")
 
 
+def _find_field(node, name, depth=0):
+    """First value stored under key `name`, searching nested dicts/lists (bounded).
+
+    The API wraps its data (the field is not at the top level of the JSON), so a
+    top-level lookup finds nothing.
+    """
+    if depth > 6:
+        return None
+    if isinstance(node, dict):
+        if name in node:
+            return node[name]
+        children = node.values()
+    elif isinstance(node, list):
+        children = node[:50]
+    else:
+        return None
+    for child in children:
+        found = _find_field(child, name, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
 def parse_mining_discount(payload):
     """Mining mode discount as a percent (1.35) from the discount API payload.
 
@@ -140,7 +163,7 @@ def parse_mining_discount(payload):
     Strict on purpose: a bool, string or null must never be coerced into a
     discount (float(None)/float("") style coercions would publish a wrong 0%).
     """
-    value = payload.get(DISCOUNT_FIELD) if isinstance(payload, dict) else None
+    value = _find_field(payload, DISCOUNT_FIELD)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if not 0 <= value <= MAX_DISCOUNT_FRACTION:
@@ -152,12 +175,18 @@ def read_mining_discount(captured, label):
     """Read the discount from the response(s) the dashboard already fetched. Never raises."""
     for response in reversed(captured):
         try:
-            percent = parse_mining_discount(response.json())
+            payload = response.json()
+            percent = parse_mining_discount(payload)
         except Exception as exc:
             print(f"[{label}] mining discount: couldn't read a response ({type(exc).__name__}).")
             continue
         if percent is not None:
             return percent
+        # Key NAMES only (never values): shows whether the shape changed, and stays
+        # safe in a public Actions log.
+        shape = sorted(payload)[:20] if isinstance(payload, dict) else type(payload).__name__
+        print(f"[{label}] mining discount: response had no usable '{DISCOUNT_FIELD}' "
+              f"(top-level keys: {shape}).")
     return None
 
 
