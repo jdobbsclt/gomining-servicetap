@@ -1,8 +1,11 @@
+import base64
 import json
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 import sentry_sdk
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -64,6 +67,33 @@ ACCOUNTS = [
     for label in ACCOUNT_LABELS
 ]
 
+# ---- Optional: publish the Mining mode discount to a public calculator ----
+#
+# The dashboard fetches /api/user/get-my-nft-discount on every load. Its
+# `rewardDistributionDiscount` field is the platform-wide Mining mode discount
+# (set weekly by the veGOMINING vote), sent as a FRACTION: 0.0135 == 1.35%.
+# We read it from that response instead of scraping the page, then keep
+# mining-mode.json in CALC_REPO up to date. Entirely optional and fork-safe:
+# with CALC_REPO / CALC_REPO_TOKEN unset (as in any fork) none of it runs.
+#
+# CALC_REPO_TOKEN is a separate fine-grained PAT (Contents: read/write on the
+# calculator repo only). It is passed to `gh` per call and never touches the
+# GH_TOKEN used for the cookie secrets.
+CALC_REPO = os.environ.get("CALC_REPO")
+CALC_REPO_TOKEN = os.environ.get("CALC_REPO_TOKEN")
+CALC_FILE = "mining-mode.json"
+DISCOUNT_API_PATH = "/api/user/get-my-nft-discount"
+DISCOUNT_FIELD = "rewardDistributionDiscount"
+MAX_DISCOUNT_FRACTION = 0.10  # sanity ceiling (10%); anything above is treated as unreadable
+# Re-stamp checked_at at least this often even when the value is unchanged, so
+# the calculator's "verified within 7 days" warning means "the job stopped",
+# not "the vote hasn't changed". Well under the calculator's 7-day threshold.
+HEARTBEAT_DAYS = 2
+_ISO_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+# label -> discount percent read during this run (filled by run_for_account).
+mining_discounts = {}
+
 
 def persist_refreshed_cookies(label, env_var, context):
     """Save this account's current cookies back to its GitHub secret.
@@ -101,6 +131,208 @@ def persist_refreshed_cookies(label, env_var, context):
         print(f"[{label}] WARNING: could not refresh {env_var} — {exc.stderr.strip()}")
     except Exception as exc:
         print(f"[{label}] WARNING: could not refresh {env_var} — {exc}")
+
+
+def _find_field(node, name, depth=0):
+    """First value stored under key `name`, searching nested dicts/lists (bounded).
+
+    The API wraps its data (the field is not at the top level of the JSON), so a
+    top-level lookup finds nothing.
+    """
+    if depth > 6:
+        return None
+    if isinstance(node, dict):
+        if name in node:
+            return node[name]
+        children = node.values()
+    elif isinstance(node, list):
+        children = node[:50]
+    else:
+        return None
+    for child in children:
+        found = _find_field(child, name, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def parse_mining_discount(payload):
+    """Mining mode discount as a percent (1.35) from the discount API payload.
+
+    Returns None unless the field is a real number within [0, MAX_DISCOUNT_FRACTION].
+    Strict on purpose: a bool, string or null must never be coerced into a
+    discount (float(None)/float("") style coercions would publish a wrong 0%).
+    """
+    value = _find_field(payload, DISCOUNT_FIELD)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not 0 <= value <= MAX_DISCOUNT_FRACTION:
+        return None
+    return round(value * 100, 4)
+
+
+def read_mining_discount(captured, label):
+    """Read the discount from the response(s) the dashboard already fetched. Never raises."""
+    for response in reversed(captured):
+        try:
+            payload = response.json()
+            percent = parse_mining_discount(payload)
+        except Exception as exc:
+            print(f"[{label}] mining discount: couldn't read a response ({type(exc).__name__}).")
+            continue
+        if percent is not None:
+            return percent
+        # Key NAMES only (never values): shows whether the shape changed, and stays
+        # safe in a public Actions log.
+        shape = sorted(payload)[:20] if isinstance(payload, dict) else type(payload).__name__
+        print(f"[{label}] mining discount: response had no usable '{DISCOUNT_FIELD}' "
+              f"(top-level keys: {shape}).")
+    return None
+
+
+def read_discount_on_fresh_page(context, label):
+    """Load the dashboard once more on a fresh page and read the discount it fetches.
+
+    This is the method the discovery probe proved live. (Reading it off the tap's
+    own first page load was tried and found nothing: that load doesn't reliably
+    request this data, while a second load in the same session does.) Records the
+    result in mining_discounts. Best-effort: never raises, never touches the tap.
+
+    If nothing is found it logs the /api/ URL *paths* seen (no queries, bodies or
+    cookies; Actions logs on a public repo are world-readable) so the next look
+    doesn't need another probe.
+    """
+    page = None
+    try:
+        page = context.new_page()
+        captured, api_paths = [], []
+
+        # A real function: Playwright can't wrap a builtin such as list.append
+        # as an event listener (AttributeError: ... '_pw_impl_instance_').
+        def on_response(response):
+            path = urlsplit(response.url).path
+            if path == DISCOUNT_API_PATH:
+                captured.append(response)
+            elif path.startswith("/api/") and path not in api_paths and len(api_paths) < 25:
+                api_paths.append(path)
+
+        page.on("response", on_response)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=30000)
+        for _ in range(10):  # up to ~10s for the app to make its data requests
+            if captured:
+                break
+            page.wait_for_timeout(1000)
+
+        percent = read_mining_discount(captured, label)
+        if percent is None:
+            print(f"[{label}] mining discount: not found ({len(captured)} matching response(s); "
+                  f"/api/ paths seen: {api_paths}).")
+        else:
+            mining_discounts[label] = percent
+            print(f"[{label}] Mining mode discount read: {percent}%")
+    except Exception as exc:
+        print(f"[{label}] mining discount read failed ({type(exc).__name__}); tap unaffected.")
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def plan_mining_mode_file(current, percent, now):
+    """Return (new_contents, value_changed) for mining-mode.json, or None if nothing needs writing.
+
+    Writes when the value changed (stamping changed_at), or when the last
+    check is older than HEARTBEAT_DAYS (stamping only checked_at).
+    """
+    stamp = now.strftime(_ISO_FORMAT)
+    current = current if isinstance(current, dict) else {}
+    old = current.get("value")
+    unchanged = (
+        isinstance(old, (int, float)) and not isinstance(old, bool)
+        and abs(old - percent) < 1e-9
+    )
+    source = "GoMining app (nightly ServiceTap run)"
+
+    if not unchanged:
+        return {"value": percent, "changed_at": stamp, "checked_at": stamp, "source": source}, True
+
+    try:
+        checked = datetime.strptime(current.get("checked_at", ""), _ISO_FORMAT).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        checked = None
+    if checked is None or now - checked >= timedelta(days=HEARTBEAT_DAYS):
+        return {
+            "value": percent,
+            "changed_at": current.get("changed_at") or stamp,
+            "checked_at": stamp,
+            "source": source,
+        }, False
+    return None
+
+
+def _calc_gh(*args):
+    """`gh api ...` against the calculator repo, authenticated with CALC_REPO_TOKEN only."""
+    return subprocess.run(
+        ["gh", "api", *args],
+        check=True, capture_output=True, text=True, timeout=30,
+        env={**os.environ, "GH_TOKEN": CALC_REPO_TOKEN},
+    )
+
+
+def publish_mining_discount(discounts):
+    """Keep CALC_FILE in CALC_REPO in step with the discount read this run.
+
+    Best-effort by design: it never raises and never affects the run's result.
+    The daily tap is what matters; if this fails, the calculator's own
+    "not verified in 7 days" warning is the backstop.
+    """
+    if not (CALC_REPO and CALC_REPO_TOKEN):
+        return  # optional feature, not configured (e.g. a fork)
+    label = "mining-discount"
+    try:
+        if not discounts:
+            report(label, "couldn't read the Mining mode discount from any account; "
+                          f"leaving {CALC_FILE} unchanged.", level="warning")
+            return
+        percent = max(discounts.values())  # platform-wide; an account in another mode could read lower
+        if len(set(discounts.values())) > 1:
+            print(f"[{label}] accounts read different values ({discounts}); using the highest.")
+
+        path = f"repos/{CALC_REPO}/contents/{CALC_FILE}"
+        for attempt in (1, 2):  # second pass only if the file changed under us (sha conflict)
+            sha, current = None, None
+            try:
+                meta = json.loads(_calc_gh(path).stdout)
+                sha = meta["sha"]
+                current = json.loads(base64.b64decode(meta["content"]))
+            except subprocess.CalledProcessError as exc:
+                if "404" not in (exc.stderr or ""):
+                    raise  # not simply "file doesn't exist yet"
+            plan = plan_mining_mode_file(current, percent, datetime.now(timezone.utc))
+            if plan is None:
+                print(f"[{label}] {CALC_FILE} already current ({percent}%, checked recently) — nothing to write.")
+                return
+            new, changed = plan
+            args = [
+                "-X", "PUT", path,
+                "-f", f"message=Mining mode discount: {'now' if changed else 'still'} {percent}% (nightly check)",
+                "-f", "content=" + base64.b64encode((json.dumps(new, indent=2) + "\n").encode()).decode(),
+            ]
+            if sha:
+                args += ["-f", f"sha={sha}"]
+            try:
+                _calc_gh(*args)
+            except subprocess.CalledProcessError as exc:
+                if attempt == 1 and any(code in (exc.stderr or "") for code in ("409", "422")):
+                    continue
+                raise
+            print(f"[{label}] wrote {CALC_FILE}: {percent}% ({'changed' if changed else 'heartbeat'}).")
+            return
+    except Exception as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        report(label, f"couldn't update {CALC_FILE} — {detail.strip()[:300]}", level="warning")
 
 
 def report(label, message, level="error"):
@@ -235,6 +467,11 @@ def run_for_account(playwright, label, env_var, cookies_json):
 
     finally:
         if authenticated:
+            # After the tap, before the cookie save (so the saved cookies are the
+            # latest rotation). Best-effort and self-contained: it can't affect
+            # the tap's result or skip the save.
+            if CALC_REPO and CALC_REPO_TOKEN and not mining_discounts:
+                read_discount_on_fresh_page(context, label)
             persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
@@ -288,6 +525,8 @@ def main():
     print("\n--- Summary ---")
     for label, ok in results.items():
         print(f"{label}: {'OK' if ok else 'FAILED'}")
+
+    publish_mining_discount(mining_discounts)  # optional + best-effort; never raises
 
     overall_ok = all(results.values())
 
