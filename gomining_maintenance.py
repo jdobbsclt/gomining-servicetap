@@ -1,5 +1,6 @@
 import base64
 import json
+import math
 import os
 import subprocess
 import sys
@@ -281,6 +282,45 @@ def _calc_gh(*args):
     )
 
 
+def _publish_calc_json(filename, make_plan, commit_message):
+    """Read `filename` from CALC_REPO, let `make_plan(current, now)` decide, write if needed.
+
+    `make_plan` returns (new_contents, value_changed) or None for "nothing to write";
+    `commit_message(new_contents, value_changed)` builds the commit message. Returns
+    that (new_contents, value_changed) pair, or None if nothing was written. Retries once
+    if the file changed under us (409/422); anything else raises (callers catch).
+    """
+    path = f"repos/{CALC_REPO}/contents/{filename}"
+    for attempt in (1, 2):
+        sha, current = None, None
+        try:
+            meta = json.loads(_calc_gh(path).stdout)
+            sha = meta["sha"]
+            current = json.loads(base64.b64decode(meta["content"]))
+        except subprocess.CalledProcessError as exc:
+            if "404" not in (exc.stderr or ""):
+                raise  # not simply "file doesn't exist yet"
+        plan = make_plan(current, datetime.now(timezone.utc))
+        if plan is None:
+            return None
+        new, changed = plan
+        args = [
+            "-X", "PUT", path,
+            "-f", f"message={commit_message(new, changed)}",
+            "-f", "content=" + base64.b64encode((json.dumps(new, indent=2) + "\n").encode()).decode(),
+        ]
+        if sha:
+            args += ["-f", f"sha={sha}"]
+        try:
+            _calc_gh(*args)
+        except subprocess.CalledProcessError as exc:
+            if attempt == 1 and any(code in (exc.stderr or "") for code in ("409", "422")):
+                continue
+            raise
+        return new, changed
+    return None
+
+
 def publish_mining_discount(discounts):
     """Keep CALC_FILE in CALC_REPO in step with the discount read this run.
 
@@ -299,40 +339,226 @@ def publish_mining_discount(discounts):
         percent = max(discounts.values())  # platform-wide; an account in another mode could read lower
         if len(set(discounts.values())) > 1:
             print(f"[{label}] accounts read different values ({discounts}); using the highest.")
-
-        path = f"repos/{CALC_REPO}/contents/{CALC_FILE}"
-        for attempt in (1, 2):  # second pass only if the file changed under us (sha conflict)
-            sha, current = None, None
-            try:
-                meta = json.loads(_calc_gh(path).stdout)
-                sha = meta["sha"]
-                current = json.loads(base64.b64decode(meta["content"]))
-            except subprocess.CalledProcessError as exc:
-                if "404" not in (exc.stderr or ""):
-                    raise  # not simply "file doesn't exist yet"
-            plan = plan_mining_mode_file(current, percent, datetime.now(timezone.utc))
-            if plan is None:
-                print(f"[{label}] {CALC_FILE} already current ({percent}%, checked recently) — nothing to write.")
-                return
-            new, changed = plan
-            args = [
-                "-X", "PUT", path,
-                "-f", f"message=Mining mode discount: {'now' if changed else 'still'} {percent}% (nightly check)",
-                "-f", "content=" + base64.b64encode((json.dumps(new, indent=2) + "\n").encode()).decode(),
-            ]
-            if sha:
-                args += ["-f", f"sha={sha}"]
-            try:
-                _calc_gh(*args)
-            except subprocess.CalledProcessError as exc:
-                if attempt == 1 and any(code in (exc.stderr or "") for code in ("409", "422")):
-                    continue
-                raise
-            print(f"[{label}] wrote {CALC_FILE}: {percent}% ({'changed' if changed else 'heartbeat'}).")
-            return
+        result = _publish_calc_json(
+            CALC_FILE,
+            lambda current, now: plan_mining_mode_file(current, percent, now),
+            lambda new, changed: f"Mining mode discount: {'now' if changed else 'still'} {percent}% (nightly check)",
+        )
+        if result is None:
+            print(f"[{label}] {CALC_FILE} already current ({percent}%, checked recently) — nothing to write.")
+        else:
+            print(f"[{label}] wrote {CALC_FILE}: {percent}% ({'changed' if result[1] else 'heartbeat'}).")
     except Exception as exc:
         detail = getattr(exc, "stderr", None) or str(exc)
         report(label, f"couldn't update {CALC_FILE} — {detail.strip()[:300]}", level="warning")
+
+
+# ---- Lock rewards model -> the calculator's lock-model.json ----
+#
+# The lock page (Governance > My lock) loads two platform-wide datasets that fully
+# determine GoMining's veGOMINING reward model (verified against GoMining's own Lock
+# Calculator: weekly reward within 0.001% for 10K-10M GMT, every lock period):
+#   * POST /api/ve-gomining-lock/statistics: totalVotes per network (sum = all lockers' votes)
+#   * POST /api/mint-and-burn/index: weekly mint cycles; the `mintReward` receiver of the
+#     latest cycle is the weekly reward pool shared among all votes.
+# Amounts arrive as wei-style numbers (1e18 = 1 GMT).
+LOCK_FILE = "lock-model.json"
+LOCK_PAGE_URL = "https://app.gomining.com/lock/ve-my-lock"
+STATS_PATH = "/api/ve-gomining-lock/statistics"
+MINT_BURN_PATH = "/api/mint-and-burn/index"
+POOL_LABEL = "mintReward"
+CYCLE_WINDOW = timedelta(days=3)      # records this close to the newest one are the same weekly cycle
+VOTES_RANGE = (1e6, 1e11)
+POOL_RANGE = (1e3, 1e8)
+YIELD_RANGE = (0.05, 1.0)             # implied yearly income per vote (0.23 today)
+YIELD_TOLERANCE = 0.02                # vs the statistics' own yearlyIncomePerVote (rounded to 2 decimals)
+# Rewrite only when something moved materially (votes drift a little every day; the pool
+# steps at each Tuesday cycle) or when the heartbeat is due (HEARTBEAT_DAYS).
+VOTES_CHANGE = 0.0025
+POOL_CHANGE = 0.0005
+
+# label -> {"total_votes", "weekly_pool_gmt", "cycle"} read during this run.
+lock_models = {}
+
+
+def _wei_to_gmt(value):
+    """Wei-style number or numeric string -> GMT (float), or None. Rejects bool/NaN/inf/negative."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number / 1e18
+
+
+def _api_rows(payload, what):
+    rows = payload.get("data", {}).get("array") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise ValueError(f"{what}: no data.array rows")
+    return rows
+
+
+def parse_lock_model(stats_payload, mint_payload):
+    """{"total_votes", "weekly_pool_gmt", "cycle"} from the two lock-page responses.
+
+    Raises ValueError (with a public-log-safe reason) when anything is missing or implausible.
+    Strict on purpose: a wrong pool or vote count silently changes every result on the calculator.
+    """
+    stats = _api_rows(stats_payload, "statistics")
+    votes, reported = 0.0, []
+    for item in stats:
+        part = _wei_to_gmt(item.get("totalVotes") if isinstance(item, dict) else None)
+        if part is None:
+            raise ValueError("statistics: a totalVotes value is missing or not a number")
+        votes += part
+        rate = item.get("yearlyIncomePerVote")
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool):
+            reported.append(rate)
+
+    latest, cycle_rows = None, []
+    for row in _api_rows(mint_payload, "mint-and-burn"):
+        try:
+            created = datetime.fromisoformat(str(row.get("createdAt")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        receivers = [r for r in (row.get("mintReceivers") or []) if isinstance(r, dict) and r.get("label") == POOL_LABEL]
+        if not receivers:
+            continue
+        cycle_rows.append((created, receivers))
+        latest = created if latest is None or created > latest else latest
+    if latest is None:
+        raise ValueError(f"mint-and-burn: no cycle with a '{POOL_LABEL}' receiver")
+    pool = 0.0
+    for created, receivers in cycle_rows:
+        if latest - created > CYCLE_WINDOW:
+            continue
+        for receiver in receivers:
+            part = _wei_to_gmt(receiver.get("value"))
+            if part is None:
+                raise ValueError(f"mint-and-burn: a {POOL_LABEL} value is missing or not a number")
+            pool += part
+
+    if not VOTES_RANGE[0] <= votes <= VOTES_RANGE[1]:
+        raise ValueError(f"total votes {votes:.0f} outside the sane range")
+    if not POOL_RANGE[0] <= pool <= POOL_RANGE[1]:
+        raise ValueError(f"weekly pool {pool:.0f} outside the sane range")
+    implied = 365 / 7 * pool / votes
+    if not YIELD_RANGE[0] <= implied <= YIELD_RANGE[1]:
+        raise ValueError(f"implied yearly income per vote {implied:.3f} outside the sane range")
+    for rate in reported:
+        if abs(implied - rate) > YIELD_TOLERANCE:
+            raise ValueError(f"implied yearly income per vote {implied:.3f} disagrees with GoMining's own {rate}")
+    return {
+        "total_votes": round(votes, 2),
+        "weekly_pool_gmt": round(pool, 2),
+        "cycle": latest.date().isoformat(),
+    }
+
+
+def read_lock_model_on_fresh_page(context, label):
+    """Load the lock page once and read the two datasets it fetches. Never raises.
+
+    Records the result in lock_models. If it can't be read, logs why (a reason string, the
+    response counts and /api/ URL paths; never bodies, queries or cookies).
+    """
+    page = None
+    try:
+        page = context.new_page()
+        captured, api_paths = {}, []
+
+        # A real function: Playwright can't wrap a builtin such as dict.__setitem__ as a listener.
+        def on_response(response):
+            path = urlsplit(response.url).path
+            if path in (STATS_PATH, MINT_BURN_PATH):
+                captured[path] = response
+            elif path.startswith("/api/") and path not in api_paths and len(api_paths) < 25:
+                api_paths.append(path)
+
+        page.on("response", on_response)
+        page.goto(LOCK_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+        for _ in range(20):  # up to ~20s for the app to make its data requests
+            if len(captured) == 2:
+                break
+            page.wait_for_timeout(1000)
+
+        if len(captured) < 2:
+            print(f"[{label}] lock model: not found (captured {sorted(captured)}; /api/ paths seen: {api_paths}).")
+            return
+        model = parse_lock_model(captured[STATS_PATH].json(), captured[MINT_BURN_PATH].json())
+        lock_models[label] = model
+        print(f"[{label}] Lock model read: votes={model['total_votes']:.0f} pool={model['weekly_pool_gmt']:.2f} GMT/wk "
+              f"(cycle {model['cycle']}).")
+    except ValueError as exc:
+        print(f"[{label}] lock model: rejected — {exc}")
+    except Exception as exc:
+        print(f"[{label}] lock model read failed ({type(exc).__name__}); tap unaffected.")
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def plan_lock_model_file(current, model, now):
+    """Return (new_contents, value_changed) for lock-model.json, or None if nothing needs writing."""
+    stamp = now.strftime(_ISO_FORMAT)
+    current = current if isinstance(current, dict) else {}
+
+    def num(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0
+
+    old_votes, old_pool = current.get("total_votes"), current.get("weekly_pool_gmt")
+    moved = (
+        not (num(old_votes) and num(old_pool))
+        or abs(model["total_votes"] - old_votes) / old_votes > VOTES_CHANGE
+        or abs(model["weekly_pool_gmt"] - old_pool) / old_pool > POOL_CHANGE
+    )
+    fresh = {
+        "total_votes": model["total_votes"],
+        "weekly_pool_gmt": model["weekly_pool_gmt"],
+        "cycle": model["cycle"],
+    }
+    source = "GoMining app: lock statistics + latest mint cycle (nightly ServiceTap run)"
+    if moved:
+        return {**fresh, "changed_at": stamp, "checked_at": stamp, "source": source}, True
+
+    try:
+        checked = datetime.strptime(current.get("checked_at", ""), _ISO_FORMAT).replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        checked = None
+    if checked is None or now - checked >= timedelta(days=HEARTBEAT_DAYS):
+        return {**fresh, "changed_at": current.get("changed_at") or stamp, "checked_at": stamp, "source": source}, False
+    return None
+
+
+def publish_lock_model(models):
+    """Keep LOCK_FILE in CALC_REPO in step with the lock model read this run. Never raises."""
+    if not (CALC_REPO and CALC_REPO_TOKEN):
+        return  # optional feature, not configured (e.g. a fork)
+    label = "lock-model"
+    try:
+        if not models:
+            report(label, f"couldn't read the lock model from any account; leaving {LOCK_FILE} unchanged.", level="warning")
+            return
+        model = next(iter(models.values()))
+        result = _publish_calc_json(
+            LOCK_FILE,
+            lambda current, now: plan_lock_model_file(current, model, now),
+            lambda new, changed: (f"Lock model: {'updated' if changed else 'still'} pool "
+                                  f"{new['weekly_pool_gmt']:.0f} GMT/wk, votes {new['total_votes'] / 1e6:.1f}M (nightly check)"),
+        )
+        if result is None:
+            print(f"[{label}] {LOCK_FILE} already current — nothing to write.")
+        else:
+            print(f"[{label}] wrote {LOCK_FILE}: pool {model['weekly_pool_gmt']:.2f}, votes {model['total_votes']:.0f} "
+                  f"({'changed' if result[1] else 'heartbeat'}).")
+    except Exception as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        report(label, f"couldn't update {LOCK_FILE} — {detail.strip()[:300]}", level="warning")
 
 
 def report(label, message, level="error"):
@@ -472,6 +698,8 @@ def run_for_account(playwright, label, env_var, cookies_json):
             # the tap's result or skip the save.
             if CALC_REPO and CALC_REPO_TOKEN and not mining_discounts:
                 read_discount_on_fresh_page(context, label)
+            if CALC_REPO and CALC_REPO_TOKEN and not lock_models:
+                read_lock_model_on_fresh_page(context, label)
             persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
@@ -527,6 +755,7 @@ def main():
         print(f"{label}: {'OK' if ok else 'FAILED'}")
 
     publish_mining_discount(mining_discounts)  # optional + best-effort; never raises
+    publish_lock_model(lock_models)            # optional + best-effort; never raises
 
     overall_ok = all(results.values())
 
