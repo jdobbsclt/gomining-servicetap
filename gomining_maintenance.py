@@ -161,6 +161,56 @@ def read_mining_discount(captured, label):
     return None
 
 
+def read_discount_on_fresh_page(context, label):
+    """Load the dashboard once more on a fresh page and read the discount it fetches.
+
+    This is the method the discovery probe proved live. (Reading it off the tap's
+    own first page load was tried and found nothing: that load doesn't reliably
+    request this data, while a second load in the same session does.) Records the
+    result in mining_discounts. Best-effort: never raises, never touches the tap.
+
+    If nothing is found it logs the /api/ URL *paths* seen (no queries, bodies or
+    cookies; Actions logs on a public repo are world-readable) so the next look
+    doesn't need another probe.
+    """
+    page = None
+    try:
+        page = context.new_page()
+        captured, api_paths = [], []
+
+        # A real function: Playwright can't wrap a builtin such as list.append
+        # as an event listener (AttributeError: ... '_pw_impl_instance_').
+        def on_response(response):
+            path = urlsplit(response.url).path
+            if path == DISCOUNT_API_PATH:
+                captured.append(response)
+            elif path.startswith("/api/") and path not in api_paths and len(api_paths) < 25:
+                api_paths.append(path)
+
+        page.on("response", on_response)
+        page.goto(DASHBOARD_URL, wait_until="domcontentloaded", timeout=30000)
+        for _ in range(10):  # up to ~10s for the app to make its data requests
+            if captured:
+                break
+            page.wait_for_timeout(1000)
+
+        percent = read_mining_discount(captured, label)
+        if percent is None:
+            print(f"[{label}] mining discount: not found ({len(captured)} matching response(s); "
+                  f"/api/ paths seen: {api_paths}).")
+        else:
+            mining_discounts[label] = percent
+            print(f"[{label}] Mining mode discount read: {percent}%")
+    except Exception as exc:
+        print(f"[{label}] mining discount read failed ({type(exc).__name__}); tap unaffected.")
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
 def plan_mining_mode_file(current, percent, now):
     """Return (new_contents, value_changed) for mining-mode.json, or None if nothing needs writing.
 
@@ -286,12 +336,6 @@ def run_for_account(playwright, label, env_var, cookies_json):
     try:
         for attempt in range(1, MAX_ATTEMPTS + 1):
             page = context.new_page()
-            # The dashboard fetches the discount data on its own; just note that
-            # response. A real function, not list.append: Playwright can't wrap a
-            # builtin method as an event listener.
-            discount_responses = []
-            page.on("response", lambda response: discount_responses.append(response)
-                    if urlsplit(response.url).path == DISCOUNT_API_PATH else None)
             try:
                 # "domcontentloaded" (HTML parsed), NOT "networkidle": the
                 # dashboard is a live app that keeps websockets/polling open
@@ -353,20 +397,6 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 # where it briefly renders enabled on stale/empty state).
                 page.wait_for_timeout(1500)
 
-                # Read the Mining mode discount from that response. Best-effort:
-                # nothing here may affect the tap below. Skipped entirely unless
-                # the calculator feature is configured.
-                if CALC_REPO and CALC_REPO_TOKEN and label not in mining_discounts:
-                    try:
-                        if not discount_responses:
-                            page.wait_for_timeout(3000)  # give a slow response a moment
-                        percent = read_mining_discount(discount_responses, label)
-                        if percent is not None:
-                            mining_discounts[label] = percent
-                            print(f"[{label}] Mining mode discount read: {percent}%")
-                    except Exception as exc:
-                        print(f"[{label}] mining discount read failed ({type(exc).__name__}); tap unaffected.")
-
                 if button.get_attribute("disabled") is not None:
                     print(f"[{label}] OK: maintenance button already on cooldown — nothing to do.")
                     success = True
@@ -408,6 +438,11 @@ def run_for_account(playwright, label, env_var, cookies_json):
 
     finally:
         if authenticated:
+            # After the tap, before the cookie save (so the saved cookies are the
+            # latest rotation). Best-effort and self-contained: it can't affect
+            # the tap's result or skip the save.
+            if CALC_REPO and CALC_REPO_TOKEN and not mining_discounts:
+                read_discount_on_fresh_page(context, label)
             persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
