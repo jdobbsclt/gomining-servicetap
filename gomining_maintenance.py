@@ -684,7 +684,7 @@ def extend_lock_position(context, label, position):
             # date picker, pre-filled with an arbitrary +1-week date -- there's nothing
             # worth re-extending to today. Same treatment as the daily tap's
             # already-on-cooldown case: nothing to do, not a failure.
-            if page.get_by_role("button", name="Custom").is_visible():
+            if page.get_by_role("button", name="Custom", exact=True).is_visible():
                 print(f"[{label}] lock {pid[:8]} ({position['amount_gmt']:.2f} GMT): "
                       f"already at (or within about a week of) the max period -- nothing to extend today.")
                 return True
