@@ -561,6 +561,183 @@ def publish_lock_model(models):
         report(label, f"couldn't update {LOCK_FILE} — {detail.strip()[:300]}", level="warning")
 
 
+# ---- Weekly veGOMINING lock re-extension ----
+#
+# A lock's votes and discount decay unless its end date is pushed back out to the
+# platform's max period roughly weekly ("re-maxing"). This reuses the account's
+# already-authenticated session to do that for every position GoMining's own
+# find-by-user call reports, skipping any position under that account's configured
+# GMT threshold (so a small/dust position is left alone). Off by default: only the
+# weekly lock_extend.yml workflow sets RUN_LOCK_EXTEND, so the nightly maintenance
+# run never touches locks.
+RUN_LOCK_EXTEND = os.environ.get("RUN_LOCK_EXTEND", "").strip().lower() in ("1", "true", "yes")
+POSITIONS_PATH = "/api/ve-gomining-lock/find-by-user"
+LOCK_VIEW_URL = "https://app.gomining.com/lock/ve-my-lock/{network}/view/{id}/edit?mode=date"
+
+# Failures during this run's lock re-extension (label, short position id or None, detail) --
+# folded into the run's overall pass/fail alongside the daily tap: a missed re-extension is
+# a real problem (decaying votes/discount), not the purely cosmetic case the CALC_REPO
+# features above are.
+lock_extend_failures = []
+
+
+def lock_skip_threshold_gmt(label):
+    """GMT amount below which a position is left untouched for this account, or None (no skip).
+
+    From LOCK_SKIP_THRESHOLD_<LABEL> (e.g. LOCK_SKIP_THRESHOLD_SECONDARY=50). Unset for an
+    account means every position on it is re-extended.
+    """
+    raw = os.environ.get(f"LOCK_SKIP_THRESHOLD_{label.upper()}")
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def read_positions_on_fresh_page(context, label):
+    """This account's veGOMINING lock positions: [{"id","network","amount_gmt","days_to_expire"}].
+
+    Reads the same POSITIONS_PATH call the Governance > My Lock page itself makes on load,
+    rather than scraping that page's own position-list markup (unversioned Angular output,
+    and not something to click blindly on a page that locks real funds). Never raises;
+    returns [] if the call isn't seen or the shape is unexpected.
+    """
+    page = None
+    try:
+        page = context.new_page()
+        captured = []
+
+        def on_response(response):
+            if urlsplit(response.url).path == POSITIONS_PATH:
+                captured.append(response)
+
+        page.on("response", on_response)
+        page.goto(LOCK_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+        for _ in range(20):  # up to ~20s for the app to make its data requests
+            if captured:
+                break
+            page.wait_for_timeout(1000)
+
+        if not captured:
+            print(f"[{label}] lock positions: not found (no {POSITIONS_PATH} response).")
+            return []
+
+        rows = captured[-1].json().get("data", {}).get("array")
+        if not isinstance(rows, list):
+            print(f"[{label}] lock positions: unexpected response shape.")
+            return []
+
+        positions = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pid, network = row.get("id"), row.get("network")
+            amount = _wei_to_gmt(row.get("amountNumeric"))
+            days = row.get("daysToExpire")
+            valid_days = isinstance(days, (int, float)) and not isinstance(days, bool)
+            if not (isinstance(pid, str) and isinstance(network, str) and amount is not None and valid_days):
+                continue
+            positions.append({"id": pid, "network": network, "amount_gmt": amount, "days_to_expire": days})
+
+        summary = ", ".join(f"{p['amount_gmt']:.2f} GMT" for p in positions)
+        print(f"[{label}] lock positions read: {len(positions)} ({summary}).")
+        return positions
+    except Exception as exc:
+        print(f"[{label}] lock positions read failed ({type(exc).__name__}); lock-extend skipped this run.")
+        return []
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def extend_lock_position(context, label, position):
+    """Re-extend one lock position to the platform's Max period. Never raises.
+
+    Verifies against the account's own data afterward (days_to_expire must have grown),
+    not just whether the clicks completed -- a click sequence that "succeeds" but doesn't
+    actually move the account's lock is exactly the silent-failure case this is meant to catch.
+    """
+    pid, network, before_days = position["id"], position["network"], position["days_to_expire"]
+    url = LOCK_VIEW_URL.format(network=network, id=pid)
+    page = None
+    try:
+        page = context.new_page()
+        # The flow ends in a confirmation prompt; GoMining's own version of it is an
+        # in-page modal (Cancel/Confirm), but accept any native dialog too (e.g. a stray
+        # beforeunload) since the only action ever taken on this page is the intended one.
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        page.get_by_role("button", name="Max", exact=True).click(timeout=20000)
+        page.wait_for_timeout(500)
+        page.get_by_role("button", name="Next", exact=True).click(timeout=10000)
+        page.wait_for_timeout(500)
+        page.get_by_role("button", name="Lock", exact=True).click(timeout=10000)
+        page.get_by_role("button", name="Confirm", exact=True).click(timeout=10000)
+        page.wait_for_timeout(2000)
+
+        fresh = read_positions_on_fresh_page(context, label)
+        after = next((p for p in fresh if p["id"] == pid), None)
+        if after is None:
+            print(f"[{label}] lock {pid[:8]}: could not verify after extending (position not found on re-read).")
+            return False
+        if after["days_to_expire"] <= before_days + 0.1:
+            print(f"[{label}] lock {pid[:8]}: days-to-expire did not increase "
+                  f"({before_days:.1f} -> {after['days_to_expire']:.1f}) -- treating as failed.")
+            return False
+
+        print(f"[{label}] lock {pid[:8]} ({position['amount_gmt']:.2f} GMT): re-extended "
+              f"({before_days:.1f} -> {after['days_to_expire']:.1f} days to expire).")
+        return True
+    except Exception as exc:
+        print(f"[{label}] lock {pid[:8]} ({position['amount_gmt']:.2f} GMT): FAILED to extend "
+              f"({type(exc).__name__}: {exc}).")
+        if page is not None:
+            os.makedirs(DEBUG_DIR, exist_ok=True)
+            try:
+                page.screenshot(path=f"{DEBUG_DIR}/{label}-lock-{pid[:8]}-failure.png", full_page=True)
+            except Exception:
+                pass
+        return False
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def extend_locks_for_account(context, label):
+    """Re-extend every qualifying lock position on this account to Max.
+
+    Best-effort per position: one position failing is reported and counted in
+    lock_extend_failures, but does not stop the others or the rest of the run.
+    """
+    positions = read_positions_on_fresh_page(context, label)
+    if not positions:
+        report(label, "could not read this account's lock positions -- lock re-extend skipped this run.")
+        lock_extend_failures.append((label, None, "could not read lock positions"))
+        return
+
+    threshold = lock_skip_threshold_gmt(label)
+    for position in positions:
+        pid_short = position["id"][:8]
+        if threshold is not None and position["amount_gmt"] < threshold:
+            print(f"[{label}] lock {pid_short} ({position['amount_gmt']:.2f} GMT): "
+                  f"below the {threshold:g} GMT skip threshold -- left alone.")
+            continue
+        if not extend_lock_position(context, label, position):
+            report(label, f"could not re-extend lock {pid_short} "
+                          f"({position['amount_gmt']:.2f} GMT) -- check it by hand.")
+            lock_extend_failures.append((label, pid_short, f"{position['amount_gmt']:.2f} GMT"))
+
+
 def report(label, message, level="error"):
     """Print for the GitHub Actions log, and mirror to Sentry if configured."""
     print(f"[{label}] {'FAILED' if level == 'error' else 'WARNING'}: {message}")
@@ -700,6 +877,8 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 read_discount_on_fresh_page(context, label)
             if CALC_REPO and CALC_REPO_TOKEN and not lock_models:
                 read_lock_model_on_fresh_page(context, label)
+            if RUN_LOCK_EXTEND:
+                extend_locks_for_account(context, label)
             persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
@@ -757,7 +936,15 @@ def main():
     publish_mining_discount(mining_discounts)  # optional + best-effort; never raises
     publish_lock_model(lock_models)            # optional + best-effort; never raises
 
-    overall_ok = all(results.values())
+    if RUN_LOCK_EXTEND:
+        if lock_extend_failures:
+            print(f"\n--- Lock re-extend: {len(lock_extend_failures)} failure(s) ---")
+            for fail_label, pid, detail in lock_extend_failures:
+                print(f"{fail_label}: {detail}" + (f" (lock {pid})" if pid else ""))
+        else:
+            print("\nLock re-extend: OK")
+
+    overall_ok = all(results.values()) and not lock_extend_failures
 
     if SENTRY_DSN:
         capture_checkin(

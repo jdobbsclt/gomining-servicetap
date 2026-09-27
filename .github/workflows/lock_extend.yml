@@ -1,0 +1,69 @@
+name: Weekly Lock Re-extend
+
+on:
+  schedule:
+    # Once a week, Saturday ~11:00am ET (EDT, UTC-4 -- shifts an hour earlier during
+    # EST/winter, same caveat as the nightly tap's schedule: GitHub's scheduler doesn't
+    # follow DST). A single fixed time, not a retry window like the nightly tap -- this
+    # isn't racing a daily unlock, so there's no need for one.
+    - cron: "0 15 * * 6"
+  workflow_dispatch: {}
+
+# Same session lock as the nightly tap (maintenance.yml): both scripts use the same
+# saved cookies and GoMining rotates the refresh token on every use, so they must never
+# run at the same time. cancel-in-progress: false so a run already in progress (e.g. the
+# Friday-night tap window bleeding past midnight) is never interrupted -- this one just
+# queues behind it.
+concurrency:
+  group: gomining-session
+  cancel-in-progress: false
+
+jobs:
+  extend-locks:
+    runs-on: ubuntu-latest
+    # Re-extending each qualifying position is a few more page loads per account on top
+    # of the normal tap; generous headroom over that, same reasoning as maintenance.yml's
+    # timeout (fail fast and loud instead of hanging for hours on a stuck step).
+    timeout-minutes: 10
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        timeout-minutes: 2
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run maintenance script (with weekly lock re-extend)
+        env:
+          GOMINING_ACCOUNT_LABELS: PRIMARY,SECONDARY
+          GOMINING_COOKIES_PRIMARY: ${{ secrets.GOMINING_COOKIES_PRIMARY }}
+          GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
+          GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+          CALC_REPO: jdobbsclt/gomining-flywheel-calculator
+          CALC_REPO_TOKEN: ${{ secrets.CALC_REPO_TOKEN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          # Turns on the lock re-extend step in gomining_maintenance.py -- unset in
+          # maintenance.yml, so the nightly tap never touches locks. The daily tap's
+          # own button click also runs here (same script), but it's a harmless no-op
+          # if today's maintenance was already done by the nightly job.
+          RUN_LOCK_EXTEND: "true"
+          # SECONDARY (Kat's account) holds a small position (~5 GMT) alongside her
+          # real one; leave anything under this many GMT alone. PRIMARY has no
+          # threshold set, so every position on it is re-extended.
+          LOCK_SKIP_THRESHOLD_SECONDARY: "50"
+        run: python gomining_maintenance.py
+
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-artifacts
+          path: debug-artifacts/
+          retention-days: 7

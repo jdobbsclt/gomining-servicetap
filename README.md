@@ -3,6 +3,8 @@
 Automatically taps GoMining's daily "maintenance" (service) button for one or
 more accounts, so your maintenance-discount streak never lapses, even if
 your computer is off. Runs entirely on GitHub Actions (free tier is plenty).
+Also includes an optional weekly job that re-extends your veGOMINING lock(s)
+so their votes don't decay (see step 8 below).
 
 ## How it works
 
@@ -145,6 +147,46 @@ expected window, closing that gap.
 
 If you skip this, everything still works, you just rely on GitHub's
 failure emails alone, which is exactly what this repo ran on for a while.
+
+### 8. (Optional) Weekly veGOMINING lock re-extend
+
+GoMining's Governance → My Lock lets you push a lock's end date back out to
+the platform's max period; its votes (and the maintenance-discount days it
+covers) decay if you don't do this roughly every week. `lock_extend.yml`
+automates that "re-max" click on a weekly schedule, reusing the exact same
+saved session as the daily tap.
+
+Off by default — the daily tap workflow never touches locks. To turn it on:
+
+1. In `.github/workflows/lock_extend.yml`, the schedule defaults to Saturday
+   ~11am ET; change the `cron` line if you want a different day/time.
+2. **Optional per-account skip threshold**: if an account holds more than one
+   lock position and you want small ones left alone (e.g. a dust position
+   you don't want auto-extended), add a
+   `LOCK_SKIP_THRESHOLD_<LABEL>: "<GMT amount>"` line to the workflow's
+   `env:` block — any position on that account under that many GMT is
+   skipped. Leave it unset for an account and every position on it is
+   re-extended.
+3. **Test it before trusting the schedule**: **Actions** tab → "Weekly Lock
+   Re-extend" → **Run workflow**. Check the log for `Lock re-extend: OK`, and
+   confirm the position(s) you expected to change actually moved on
+   GoMining's own My Lock page.
+
+Safety notes, since this clicks a real financial action (extending how long
+GMT stays locked), not just a routine daily button:
+
+- Each position's new state is **verified against GoMining's own account
+  data** afterward (the position's days-to-expire must have actually grown),
+  not just whether the clicks appeared to complete. A click sequence that
+  "succeeds" but doesn't move the account's real lock is treated as a
+  failure, not a silent success.
+- A failure on one position is reported (the same way a tap failure is —
+  GitHub email, plus Sentry if configured) and does not stop the other
+  positions or accounts in the same run.
+- It navigates straight to each position's own edit page (read from
+  GoMining's own position-list API response) rather than clicking through
+  the My Lock overview page's row list, so it isn't relying on that page's
+  row markup, which is unversioned and could change without notice.
 
 ## Staying up to date
 
