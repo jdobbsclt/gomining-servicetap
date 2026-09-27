@@ -674,7 +674,23 @@ def extend_lock_position(context, label, position):
         page.on("dialog", lambda dialog: dialog.accept())
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        page.get_by_role("button", name="Max", exact=True).click(timeout=20000)
+        max_btn = page.get_by_role("button", name="Max", exact=True)
+        try:
+            max_btn.wait_for(state="visible", timeout=8000)
+        except PlaywrightTimeoutError:
+            # GoMining only offers the "Max" quick-pick when there's room to extend
+            # further than the lock's current end date. A lock already at (or within
+            # about a week of) the platform's max period instead shows only a "Custom"
+            # date picker, pre-filled with an arbitrary +1-week date -- there's nothing
+            # worth re-extending to today. Same treatment as the daily tap's
+            # already-on-cooldown case: nothing to do, not a failure.
+            if page.get_by_role("button", name="Custom").is_visible():
+                print(f"[{label}] lock {pid[:8]} ({position['amount_gmt']:.2f} GMT): "
+                      f"already at (or within about a week of) the max period -- nothing to extend today.")
+                return True
+            raise  # neither button present -- an unrecognized page state; let the except below report it
+
+        max_btn.click()
         page.wait_for_timeout(500)
         page.get_by_role("button", name="Next", exact=True).click(timeout=10000)
         page.wait_for_timeout(500)
@@ -728,6 +744,11 @@ def extend_locks_for_account(context, label):
     threshold = lock_skip_threshold_gmt(label)
     for position in positions:
         pid_short = position["id"][:8]
+        if position["amount_gmt"] <= 0:
+            # An empty/closed position (0 GMT still listed by the API) -- nothing to
+            # lock or extend, regardless of the account's threshold.
+            print(f"[{label}] lock {pid_short}: 0 GMT locked -- nothing to extend, left alone.")
+            continue
         if threshold is not None and position["amount_gmt"] < threshold:
             print(f"[{label}] lock {pid_short} ({position['amount_gmt']:.2f} GMT): "
                   f"below the {threshold:g} GMT skip threshold -- left alone.")
