@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ServiceTap — Cookie Capture Tool</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+    --dim: #8b949e; --accent: #6e40c9; --accent2: #a371f7; --green: #3fb950;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de; --text: #1f2328; --dim: #57606a; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text); margin: 0; padding: 24px 16px 64px;
+    font: 16px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  p.lede { color: var(--dim); margin-top: 0; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; margin: 20px 0;
+  }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  ol { padding-left: 22px; margin: 0; }
+  li { margin-bottom: 14px; }
+  li:last-child { margin-bottom: 0; }
+  .bookmarklet {
+    display: inline-block; background: var(--accent); color: #fff; text-decoration: none;
+    font-weight: 600; padding: 10px 18px; border-radius: 8px; cursor: grab;
+    border: 1px solid var(--accent2);
+  }
+  .bookmarklet:hover { background: var(--accent2); }
+  .drag-row { text-align: center; padding: 6px 0 2px; }
+  .hint { color: var(--dim); font-size: 0.9rem; margin-top: 8px; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+    background: rgba(110,64,201,0.12); padding: 1px 5px; border-radius: 4px; font-size: 0.9em;
+  }
+  a { color: var(--accent2); }
+  .warn { border-left: 3px solid #d29922; padding-left: 12px; color: var(--dim); font-size: 0.92rem; }
+  footer { color: var(--dim); font-size: 0.85rem; margin-top: 32px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔑 Cookie Capture Tool</h1>
+  <p class="lede">For <a href="https://github.com/jdobbsclt/gomining-servicetap">GoMining ServiceTap</a> — grabs the three values ServiceTap needs, without you hunting through DevTools by hand for all of them.</p>
+
+  <div class="panel">
+    <h2>Step 1 — Get the tool</h2>
+    <div class="drag-row">
+      <a class="bookmarklet" href="javascript:(function(){function g(n){var m=document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]*)'));return m?decodeURIComponent(m[1]):null;}if(!/(^|[.])gomining[.]com$/.test(location.hostname)){alert('Open this on app.gomining.com while logged in, then click this again.');return;}var a=g('access_token'),r=g('refresh_token');if(!a||!r){alert('Could not find your login cookies. Make sure you are logged into GoMining in this tab, then try again.');return;}var c=window.prompt('Almost done! Open DevTools (F12, or Cmd+Opt+I on Mac), go to Application, then Storage, then Cookies, then https://app.gomining.com. Find the row named cf_clearance and paste its Value here:');if(!c){alert('Cancelled -- cf_clearance is required. Run this again when ready.');return;}var e=Math.floor(Date.now()/1000)+31536000;var j=JSON.stringify([{name:'access_token',value:a,domain:'.gomining.com',path:'/',expires:e,httpOnly:false,secure:true,sameSite:'Lax'},{name:'refresh_token',value:r,domain:'.gomining.com',path:'/',expires:e,httpOnly:false,secure:true,sameSite:'Lax'},{name:'cf_clearance',value:c.replace(/^\s+|\s+$/g,''),domain:'.gomining.com',path:'/',expires:e,httpOnly:true,secure:true,sameSite:'None'}]);function done(ok){window.prompt((ok?'Copied to your clipboard!':'Could not auto-copy -- select all below and copy it with Ctrl or Cmd plus C:')+' Paste this as the value of your GOMINING_COOKIES_LABEL GitHub secret:',j);}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(j).then(function(){done(true);},function(){done(false);});}else{done(false);}})();">📋 Capture GoMining Cookies</a>
+    </div>
+    <p class="hint" style="text-align:center;">Drag that button up to your browser's bookmarks bar. (On phones/tablets, bookmarklets generally don't work — use the manual DevTools method in the repo's README instead.)</p>
+  </div>
+
+  <div class="panel">
+    <h2>Step 2 — Use it</h2>
+    <ol>
+      <li>Log into <a href="https://app.gomining.com">app.gomining.com</a> normally, same as always.</li>
+      <li>Click the bookmarklet you just saved. It reads two of the three values it needs automatically.</li>
+      <li>It'll ask you for one more value it <em>can't</em> read itself (<code>cf_clearance</code> — a Cloudflare security cookie, deliberately locked down). Open DevTools (<code>F12</code>, or <code>Cmd+Opt+I</code> on Mac) → <strong>Application</strong> tab → <strong>Storage → Cookies</strong> → <code>https://app.gomining.com</code>, find the row named <code>cf_clearance</code>, and paste its <strong>Value</strong> column into the box the bookmarklet showed you.</li>
+      <li>It copies the finished result to your clipboard (or shows it in a box to copy if your browser blocks that) — ready to paste straight into GitHub.</li>
+    </ol>
+  </div>
+
+  <div class="panel">
+    <h2>Step 3 — Paste it into GitHub</h2>
+    <p>In your copy of the repo: <strong>Settings → Secrets and variables → Actions → New repository secret</strong>. Name it <code class="mono">GOMINING_COOKIES_&lt;LABEL&gt;</code> (e.g. <code>GOMINING_COOKIES_PRIMARY</code>) and paste what you copied as the value.</p>
+    <p class="warn">⚠️ This is a login session for your account, not your password — but treat it the same as you would a "stay signed in" cookie: don't paste it anywhere except a GitHub Secret (which nobody, including GitHub, can read back once saved), and never share it or paste it into a chat, doc, or issue.</p>
+  </div>
+
+  <footer>
+    Runs entirely in your own browser — nothing here is sent anywhere except your own clipboard.
+    <br>Part of <a href="https://github.com/jdobbsclt/gomining-servicetap">jdobbsclt/gomining-servicetap</a>.
+  </footer>
+</main>
+</body>
+</html>
