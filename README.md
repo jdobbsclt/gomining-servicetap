@@ -38,9 +38,11 @@ and follow its steps. It signs you into GitHub (the same device sign-in
 method the official `gh` command-line tool uses — you approve on GitHub's
 own site, never here), then forks this repo, writes your GitHub Secret, and
 edits the workflow file for you, ending with a real test run so you know it
-worked. You'll still need the
+worked. You'll still need two things partway through, and the wizard walks you
+through both: the
 [cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
-partway through (the wizard tells you when). Your GitHub sign-in never
+(use a private window — see its tip), and one GitHub token made from a
+pre-filled form (GitHub doesn't let a website create it for you). Your GitHub sign-in never
 touches your GoMining password, and vice versa — they're two completely
 separate logins.
 
@@ -132,11 +134,19 @@ secret**.
 
 - One `GOMINING_COOKIES_<LABEL>` secret per account, paste the JSON array
   from step 3
-- `GH_PAT_SECRETS_WRITE`, a **fine-grained** GitHub personal access token,
-  scoped to **only this repo**, with **Secrets: read and write** permission
-  and nothing else. This is what lets the script self-refresh the cookie
-  secrets above after each run. Create one at
-  <https://github.com/settings/tokens?type=beta>.
+- `GH_PAT_SECRETS_WRITE` (**required**, not optional), a **fine-grained**
+  GitHub personal access token, scoped to **only this repo**, with **Secrets:
+  read and write** permission and nothing else. GoMining changes your login
+  each time it's used, and this token is what lets the script save the new
+  one back to the secrets above after each run — without it, your automation
+  works about once and then stops. [This link opens the token form with the
+  name, permission and a one-year expiry already filled
+  in](https://github.com/settings/personal-access-tokens/new?name=ServiceTap+self-refresh&expires_in=365&secrets=write)
+  — you still have to switch **Repository access** to "Only select
+  repositories" and pick your fork yourself (GitHub can't pre-fill that part,
+  and the form **defaults to "All repositories"**, which would let the token
+  write secrets to every repo you own — don't skip this). It expires after a
+  year, so set a reminder to renew it.
 
 ### 5. Test it
 
@@ -185,10 +195,18 @@ covers) decay if you don't do this roughly every week. `lock_extend.yml`
 automates that "re-max" click on a weekly schedule, reusing the exact same
 saved session as the daily tap.
 
-Off by default — the daily tap workflow never touches locks. To turn it on:
+**Heads up — this workflow ships in the repo with a live schedule, so a copy
+of the repo will run it every Saturday unless you turn it off.** It's
+written for a two-account `PRIMARY,SECONDARY` layout (this repo's own), so on
+anyone else's copy it fails and emails them. The setup wizard turns it off
+on your copy for you. If you forked by hand and don't want it, disable it now:
+**Actions** tab → "Weekly Lock Re-extend" → **⋯** → **Disable workflow**. (The
+daily tap workflow itself never touches locks.) To actually use it:
 
-1. In `.github/workflows/lock_extend.yml`, the schedule defaults to Saturday
-   ~11am ET; change the `cron` line if you want a different day/time.
+1. In `.github/workflows/lock_extend.yml`, change the account labels in the
+   `env:` block to match yours (same labels as `maintenance.yml`), then
+   re-enable the workflow. The schedule defaults to Saturday ~11am ET;
+   change the `cron` line if you want a different day/time.
 2. **Optional per-account skip threshold**: if an account holds more than one
    lock position and you want small ones left alone (e.g. a dust position
    you don't want auto-extended), add a

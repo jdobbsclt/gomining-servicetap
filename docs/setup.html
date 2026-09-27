@@ -89,7 +89,7 @@
 <body>
 <main>
   <h1>🚀 ServiceTap Setup Wizard</h1>
-  <p class="lede">Sets up your own copy of <a href="https://github.com/jdobbsclt/gomining-servicetap">GoMining ServiceTap</a> — signs you into GitHub, forks the repo, and configures your account(s) automatically.</p>
+  <p class="lede">Sets up your own copy of <a href="https://github.com/jdobbsclt/gomining-servicetap" target="_blank" rel="noopener">GoMining ServiceTap</a> — signs you into GitHub, forks the repo, and configures your account(s) automatically.</p>
 
   <div class="steps">
     <span data-step="signin">1. Sign in</span>
@@ -128,14 +128,22 @@
   <!-- STEP 3: accounts -->
   <section class="panel" id="panel-accounts" hidden>
     <h2>Step 3 — Your GoMining account(s)</h2>
-    <p>For each account: use the <a href="cookie-tool.html">cookie capture tool</a> first (in a separate tab), then paste what it copied here.</p>
+    <p>For each account: use the <a href="cookie-tool.html" target="_blank" rel="noopener">cookie capture tool</a> first (it opens in a new tab, so you won't lose your place here), then paste what it copied below.</p>
+    <p class="warn"><strong>Tip — use a private window for this.</strong> GoMining changes your login every time it's used, so if the automation and your everyday browser share one login, they can knock each other out. Open a private/incognito window, log into GoMining there, run the tool, then simply close the window. (Don't click "Log out" first — that may end the session you just captured.)</p>
     <div id="account-blocks"></div>
     <button class="secondary" id="btn-add-account" type="button">+ Add another account</button>
     <hr style="border-color:var(--border); margin:16px 0;">
+    <h3 style="font-size:0.98rem; margin:0 0 8px;">Self-refresh token <span style="color:var(--red); font-weight:normal;">(required)</span></h3>
+    <p>Because GoMining changes your login each time it's used, your automation has to save the new one back to your repo after every run. Without this token it works about once and then stops. GitHub doesn't let a website create this token for you, but the form can be mostly pre-filled — three quick steps:</p>
+    <ol style="margin:0 0 12px; padding-left:22px;">
+      <li><a id="pat-link" href="#" target="_blank" rel="noopener">Open the token form →</a> (opens in a new tab; the name, permission and expiry are already filled in)</li>
+      <li>Scroll to <strong>Repository access</strong>. The form starts on <em>"All repositories"</em> — <strong>change it to "Only select repositories"</strong> and pick <code id="pat-repo"></code> (the token should only ever be able to touch that one repo)</li>
+      <li>Click <strong>Generate token</strong>, copy it, and paste it here:</li>
+    </ol>
     <label class="field">
-      <span>Self-refresh token (optional but recommended) — a fine-grained GitHub token, scoped to <em>only your new repo</em>, with <strong>Secrets: read and write</strong> permission. This lets the script keep your login working automatically. <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">Create one →</a></span>
-      <input type="text" id="pat-input" placeholder="github_pat_...">
+      <input type="text" id="pat-input" placeholder="github_pat_..." autocomplete="off" spellcheck="false">
     </label>
+    <p class="hint" style="color:var(--dim); font-size:0.88rem;">This token lasts a year — worth a calendar reminder, since the automation stops saving your login when it expires.</p>
     <button id="btn-configure">Set up my repo</button>
   </section>
 
@@ -162,7 +170,7 @@
 
   <footer>
     Your GitHub sign-in happens directly with GitHub; nothing here ever sees your GoMining password.
-    <br>Part of <a href="https://github.com/jdobbsclt/gomining-servicetap">jdobbsclt/gomining-servicetap</a>.
+    <br>Part of <a href="https://github.com/jdobbsclt/gomining-servicetap" target="_blank" rel="noopener">jdobbsclt/gomining-servicetap</a>.
   </footer>
 </main>
 
@@ -195,8 +203,20 @@ function markDone(name) {
   const chip = document.querySelector(`.steps span[data-step="${name}"]`);
   if (chip) chip.classList.add("done");
 }
+// Plain text by default, so nothing that came back from a network response can ever be
+// interpreted as markup. fatalHtml() is only for our own hand-written messages that need
+// <code>/<strong>, and anything variable inside them goes through esc().
 function fatal(msg) {
-  $("global-err").innerHTML = `<div class="err">⚠️ ${msg}</div>`;
+  const d = document.createElement("div");
+  d.className = "err";
+  d.textContent = "⚠️ " + msg;
+  $("global-err").replaceChildren(d);
+}
+function fatalHtml(html) {
+  $("global-err").innerHTML = `<div class="err">⚠️ ${html}</div>`;
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 function clearFatal() { $("global-err").innerHTML = ""; }
 
@@ -311,8 +331,9 @@ async function doFork() {
   while (Date.now() < deadline) {
     const check = await gh(`/repos/${ghLogin}/${REPO_NAME}`);
     if (check.ok) {
-      $("fork-status").innerHTML = '<span class="ok">✓ Forked to ' + ghLogin + "/" + REPO_NAME + "</span>";
+      $("fork-status").innerHTML = '<span class="ok">✓ Forked to ' + esc(ghLogin) + "/" + esc(REPO_NAME) + "</span>";
       markDone("fork");
+      preparePatLink();
       showStep("accounts");
       return;
     }
@@ -321,6 +342,22 @@ async function doFork() {
   fatal("Your fork is taking longer than usual to appear. Refresh this page's Step 2 in a minute, or check " +
         `https://github.com/${ghLogin}/${REPO_NAME} directly.`);
   $("btn-fork").disabled = false;
+}
+
+// ---- Step 3: self-refresh token link ------------------------------------------------------
+// GitHub can pre-fill a fine-grained token's name, description, owner, expiry and permission
+// via URL parameters (documented at docs.github.com -> "Managing your personal access
+// tokens"), but NOT which repository it's scoped to -- so the user still picks their fork.
+function preparePatLink() {
+  const params = new URLSearchParams({
+    name: "ServiceTap self-refresh",
+    description: "Lets my ServiceTap automation save its refreshed GoMining login back to this repo's Secrets.",
+    target_name: ghLogin,
+    expires_in: "365",
+    secrets: "write",
+  });
+  $("pat-link").href = "https://github.com/settings/personal-access-tokens/new?" + params.toString();
+  $("pat-repo").textContent = ghLogin + "/" + REPO_NAME;
 }
 
 // ---- Step 3: account blocks -------------------------------------------------------------
@@ -438,8 +475,60 @@ async function runConfigure() {
   if (labelSet.size !== accounts.length) { fatal("Account labels must be unique."); return; }
 
   const pat = $("pat-input").value.trim();
+  if (!pat) {
+    fatal("The self-refresh token is required — without it your automation works about once and then stops. Use the \"Open the token form\" link above, then paste the token you generate.");
+    return;
+  }
+  if (!/^(github_pat_|ghp_)/.test(pat)) {
+    fatalHtml("That doesn't look like a GitHub token — it should start with <code>github_pat_</code>. Make sure you copied the token itself from GitHub's \"Generate token\" result.");
+    return;
+  }
 
+  // Check the token really can write secrets to THIS repo before changing anything, so a
+  // wrong repository pick or missing permission is caught here, on the same screen, instead
+  // of surfacing halfway through as a confusing failure much later.
   $("btn-configure").disabled = true;
+  const patHeaders = { "Accept": "application/vnd.github+json", "Authorization": "Bearer " + pat, "X-GitHub-Api-Version": "2022-11-28" };
+  let patCheck;
+  try {
+    patCheck = await fetch(`https://api.github.com/repos/${ghLogin}/${REPO_NAME}/actions/secrets/public-key`, { headers: patHeaders });
+  } catch (e) {
+    fatal("Couldn't reach GitHub to check your token. Check your connection and try again.");
+    $("btn-configure").disabled = false;
+    return;
+  }
+  if (!patCheck.ok) {
+    fatalHtml(`That token can't write secrets to <code>${esc(ghLogin)}/${esc(REPO_NAME)}</code> (GitHub said HTTP ${esc(patCheck.status)}). On the token form, make sure <strong>Repository access</strong> is <strong>Only select repositories</strong> with your fork ticked, and that <strong>Secrets</strong> is set to <strong>Read and write</strong> — then generate a fresh token and paste it again.`);
+    $("btn-configure").disabled = false;
+    return;
+  }
+
+  // Least-privilege check. GitHub's token form defaults to "All repositories", which would let
+  // this token write secrets to EVERY repo the user owns, not just their copy of this one. If
+  // they own any other repo, see whether the pasted token can reach it -- if it can, it's
+  // broader than this needs, so say so before saving it anywhere. (If they own no other repo
+  // there's nothing to test against, so this can't tell either way and stays quiet.)
+  let otherRepo = null;
+  try {
+    const listRes = await gh("/user/repos?affiliation=owner&per_page=100&sort=updated");
+    if (listRes.ok) {
+      const mine = `${ghLogin}/${REPO_NAME}`.toLowerCase();
+      const other = (await listRes.json()).find((r) => r.full_name.toLowerCase() !== mine);
+      otherRepo = other ? other.full_name : null;
+    }
+  } catch (e) { /* best-effort */ }
+  if (otherRepo) {
+    let broad = null;
+    try {
+      broad = await fetch(`https://api.github.com/repos/${otherRepo}/actions/secrets/public-key`, { headers: patHeaders });
+    } catch (e) { /* best-effort */ }
+    if (broad && broad.ok) {
+      fatalHtml(`That token can also write secrets to <code>${esc(otherRepo)}</code> — the form defaults to <strong>All repositories</strong>, which is far broader than this needs. Go back to the token form, choose <strong>Only select repositories</strong>, tick only <code>${esc(ghLogin)}/${esc(REPO_NAME)}</code>, generate a fresh token and paste it again. (You can delete the too-broad one at github.com/settings/personal-access-tokens.)`);
+      $("btn-configure").disabled = false;
+      return;
+    }
+  }
+
   showStep("writing");
   $("writing-log").innerHTML = "";
 
@@ -456,25 +545,42 @@ async function runConfigure() {
       logLine(`✓ GOMINING_COOKIES_${a.label} saved.`, "ok");
     }
 
-    if (pat) {
-      logLine("Writing secret GH_PAT_SECRETS_WRITE…");
-      await writeRepoSecret(ghLogin, REPO_NAME, keyInfo, "GH_PAT_SECRETS_WRITE", pat);
-      logLine("✓ GH_PAT_SECRETS_WRITE saved.", "ok");
-    } else {
-      logLine("Skipped GH_PAT_SECRETS_WRITE (none pasted) -- self-refresh won't work until you add one later.", "");
-    }
+    logLine("Writing secret GH_PAT_SECRETS_WRITE…");
+    await writeRepoSecret(ghLogin, REPO_NAME, keyInfo, "GH_PAT_SECRETS_WRITE", pat);
+    logLine("✓ GH_PAT_SECRETS_WRITE saved.", "ok");
 
     logLine("Updating the workflow file to match your account label(s)…");
     await rewriteWorkflowEnv(ghLogin, REPO_NAME, accounts);
     logLine("✓ Workflow file updated.", "ok");
+
+    // The repo also ships an optional WEEKLY lock re-extend workflow, hardcoded for a
+    // PRIMARY/SECONDARY layout and a lock the user may not even have. Left on, it would
+    // fail (and email them) every Saturday, so turn it off on their copy. Non-fatal: the
+    // daily tap doesn't depend on it.
+    logLine("Turning off the optional weekly lock re-extend job on your copy…");
+    try {
+      const dis = await gh(`/repos/${ghLogin}/${REPO_NAME}/actions/workflows/lock_extend.yml/disable`, { method: "PUT" });
+      if (dis.ok || dis.status === 204) {
+        logLine("✓ Left off. (You can turn it on later — see step 8 of the README.)", "ok");
+      } else {
+        logLine(`Couldn't turn it off automatically (HTTP ${dis.status}). Please disable "Weekly Lock Re-extend" in your repo's Actions tab so it doesn't email you on Saturdays.`, "");
+      }
+    } catch (e) {
+      logLine("Couldn't turn it off automatically. Please disable \"Weekly Lock Re-extend\" in your repo's Actions tab so it doesn't email you on Saturdays.", "");
+    }
 
     markDone("accounts");
     markDone("writing");
     showStep("test");
   } catch (e) {
     logLine("✗ " + e.message, "err");
-    fatal("Something went wrong while configuring your repo -- see the log above. You can fix it by hand in your repo's Settings, or reload and try again.");
-    $("btn-configure").disabled = false;
+    fatal("Something went wrong while configuring your repo -- see the log above. Nothing is lost: everything done so far can safely be repeated.");
+    const back = document.createElement("button");
+    back.className = "secondary";
+    back.style.marginTop = "12px";
+    back.textContent = "← Back to Step 3 to try again";
+    back.addEventListener("click", () => { clearFatal(); $("btn-configure").disabled = false; showStep("accounts"); });
+    $("writing-log").appendChild(back);
   }
 }
 
@@ -520,10 +626,10 @@ async function runTest() {
     if (info.status === "completed") {
       const ok = info.conclusion === "success";
       $("test-status").innerHTML = (ok ? '<span class="ok">✓ Test run succeeded!</span>' : '<span style="color:var(--red)">✗ Test run failed.</span>') +
-        ` <a href="${info.html_url}" target="_blank" rel="noopener">View the full log →</a>`;
+        ` <a href="${esc(info.html_url)}" target="_blank" rel="noopener">View the full log →</a>`;
       markDone("test");
       $("done-summary").innerHTML = ok
-        ? `Everything's working. Your repo (<a href="https://github.com/${ghLogin}/${REPO_NAME}" target="_blank" rel="noopener">${ghLogin}/${REPO_NAME}</a>) will now run automatically on its schedule.`
+        ? `Everything's working. Your repo (<a href="https://github.com/${esc(ghLogin)}/${esc(REPO_NAME)}" target="_blank" rel="noopener">${esc(ghLogin)}/${esc(REPO_NAME)}</a>) will now run automatically every night. Two things to remember: the self-refresh token you made expires in a year (set a reminder), and the optional weekly lock re-extend job was left off — see step 8 of the README if you want it.`
         : `Setup finished, but the test run failed -- check the log above, or your repo's README ("If a run fails") for common fixes.`;
       showStep("done");
       markDone("done");

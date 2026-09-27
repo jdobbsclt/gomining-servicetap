@@ -60,8 +60,9 @@
 
   <div class="panel">
     <h2>Step 2 — Use it</h2>
+    <p class="warn" style="margin-bottom:14px;"><strong>Tip — use a private window.</strong> GoMining changes your login every time it's used, so if the automation and your everyday browser share one login, they can knock each other out. Open a private/incognito window, do the steps below there, then simply close the window. (Don't click "Log out" first — that may end the session you just captured.)</p>
     <ol>
-      <li>Log into <a href="https://app.gomining.com">app.gomining.com</a> normally, same as always.</li>
+      <li>Log into <a href="https://app.gomining.com">app.gomining.com</a> (in that private window).</li>
       <li>Click the bookmarklet you just saved. It reads two of the three values it needs automatically.</li>
       <li>It'll ask you for one more value it <em>can't</em> read itself (<code>cf_clearance</code> — a Cloudflare security cookie, deliberately locked down). Open DevTools (<code>F12</code>, or <code>Cmd+Opt+I</code> on Mac) → <strong>Application</strong> tab → <strong>Storage → Cookies</strong> → <code>https://app.gomining.com</code>, find the row named <code>cf_clearance</code>, and paste its <strong>Value</strong> column into the box the bookmarklet showed you.</li>
       <li>It copies the finished result to your clipboard (or shows it in a box to copy if your browser blocks that) — ready to paste straight into GitHub.</li>
