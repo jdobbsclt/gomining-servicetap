@@ -32,6 +32,21 @@ meaningfully lowers the odds of a full miss.
 
 ## One-time setup
 
+**Easiest: the setup wizard (recommended).** Visit
+[the setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
+and follow its steps. It signs you into GitHub (the same device sign-in
+method the official `gh` command-line tool uses — you approve on GitHub's
+own site, never here), then forks this repo, writes your GitHub Secret, and
+edits the workflow file for you, ending with a real test run so you know it
+worked. You'll still need the
+[cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
+partway through (the wizard tells you when). Your GitHub sign-in never
+touches your GoMining password, and vice versa — they're two completely
+separate logins.
+
+If you'd rather do it by hand, or want to understand what the wizard is
+doing for you, here are the same steps manually:
+
 ### 1. Fork this repo
 
 Click **Fork** near the top of
@@ -264,6 +279,10 @@ See `CLAUDE.md` for operational gotchas learned the hard way: GitHub's
 `schedule` trigger can get "stuck" and needs a disable/re-enable cycle after
 editing the cron, its timing is best-effort by design, and there's a
 multi-account `gh` CLI quirk worth knowing about.
+
+The setup wizard (`docs/setup.html`) has its own tiny backend —
+`setup-wizard/worker/`, a Cloudflare Worker — see its own README for what it
+does and how to redeploy it.
 
 ## A note on storing session cookies
 
