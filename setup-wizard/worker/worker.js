@@ -59,7 +59,10 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "POST" && url.pathname === "/device/code") {
-      return relay(DEVICE_CODE_URL, { client_id: env.GITHUB_OAUTH_CLIENT_ID, scope: "repo" });
+      // "repo" alone isn't enough to edit .github/workflows/* -- GitHub gates that behind
+      // a separate "workflow" scope, confirmed live (a real setup run wrote the cookie
+      // secret fine with "repo" only, then got a 404 writing the workflow file).
+      return relay(DEVICE_CODE_URL, { client_id: env.GITHUB_OAUTH_CLIENT_ID, scope: "repo workflow" });
     }
 
     if (request.method === "POST" && url.pathname === "/device/token") {
