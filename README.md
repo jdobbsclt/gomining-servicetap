@@ -187,6 +187,12 @@ GMT stays locked), not just a routine daily button:
   GoMining's own position-list API response) rather than clicking through
   the My Lock overview page's row list, so it isn't relying on that page's
   row markup, which is unversioned and could change without notice.
+- A position already at (or within about a week of) the platform's max
+  period is left alone and counted as OK, not a failure — GoMining's own
+  page drops the "Max" quick-pick in that state (only a "Custom" date
+  picker remains), since there's nothing left to gain by re-extending it
+  today. A 0-GMT position (an empty/closed lock, still listed by the API)
+  is always skipped too, regardless of any threshold.
 
 ## Staying up to date
 
