@@ -32,9 +32,14 @@ meaningfully lowers the odds of a full miss.
 
 ## One-time setup
 
-### 1. Fork or clone this repo
+### 1. Fork this repo
 
-Push it to your own GitHub account, private or public, doesn't matter.
+Click **Fork** near the top of
+[this repo's GitHub page](https://github.com/jdobbsclt/gomining-servicetap).
+Public or private, doesn't matter. (Forking, not GitHub's "Use this
+template" option, is what keeps the one-click **Sync fork** button
+working later — see "Staying up to date" below — so future bug fixes
+don't need a manual copy-paste.)
 
 ### 2. Set your account label
 
@@ -69,7 +74,16 @@ env:
 You never enter your GoMining password anywhere in this repo or its
 secrets, only session cookies, captured from a real logged-in browser.
 
-**If you're using Claude Code (recommended):** this repo ships a
+**Easiest: the cookie capture tool (recommended).** Visit
+[the cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
+and follow its 3 steps. It's a bookmarklet — a button you drag to your
+bookmarks bar once — that reads most of what's needed on its own and
+only asks you to look up one value by hand (GoMining locks that one
+down so a webpage can't read it automatically), then copies the
+finished, correctly-formatted result straight to your clipboard, ready
+to paste into step 4 below.
+
+**If you're using Claude Code:** this repo ships a
 `capture-cookies` skill (`.claude/skills/capture-cookies/SKILL.md`) that
 walks Claude through doing this for you interactively — it drives a real,
 visible browser, you complete the "Continue with Google" login yourself,
@@ -83,7 +97,7 @@ Google") logins driven by a script with "This browser or app may not be
 secure" — it's a deliberate Google anti-automation policy, not something
 worth working around client-side. The script was removed for that reason.
 
-**Manual method (any browser):**
+**Manual method (fallback — any browser, no bookmarklet):**
 1. Log into <https://app.gomining.com> normally
 2. Open DevTools (F12) → **Application** tab → **Storage → Cookies** →
    `https://app.gomining.com`
@@ -226,7 +240,8 @@ run log first:
   served its signup page instead of the dashboard. This isn't retried (a
   dead session fails the same way every time), so you'll see it right away.
   Fix: re-capture cookies for that account (step 3 above — the
-  `capture-cookies` skill, or the manual DevTools method). GoMining
+  [cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html),
+  the `capture-cookies` skill, or the manual DevTools method). GoMining
   invalidates sessions on their side from time to time, so this is expected
   occasionally and isn't a bug.
 - **"session expired" right after you turned on 2FA** (on your GoMining
