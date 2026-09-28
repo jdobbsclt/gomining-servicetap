@@ -257,16 +257,34 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 async function startSignIn() {
   clearFatal();
   $("btn-signin").disabled = true;
-  let codeRes;
-  try {
-    codeRes = await fetch(WORKER_BASE + "/device/code", { method: "POST" });
-  } catch (e) {
+  const idleLabel = $("btn-signin").textContent;
+  // GitHub sometimes answers "too many requests" (429) or hiccups (5xx) because the relay's
+  // address is shared with other sites. That clears within seconds, so retry a few times.
+  const RETRY_WAITS = [3000, 6000, 12000, 20000];
+  let codeRes = null;
+  let netFail = false;
+  for (let attempt = 0; attempt <= RETRY_WAITS.length; attempt++) {
+    netFail = false;
+    try {
+      codeRes = await fetch(WORKER_BASE + "/device/code", { method: "POST" });
+    } catch (e) {
+      netFail = true;
+    }
+    if (!netFail && codeRes.status !== 429 && codeRes.status < 500) break;
+    if (attempt === RETRY_WAITS.length) break;
+    $("btn-signin").textContent = "GitHub is busy - retrying (" + (attempt + 1) + " of " + RETRY_WAITS.length + ")…";
+    await sleep(RETRY_WAITS[attempt]);
+  }
+  $("btn-signin").textContent = idleLabel;
+  if (netFail) {
     fatal("Could not reach the sign-in service. Check your connection and try again.");
     $("btn-signin").disabled = false;
     return;
   }
   if (!codeRes.ok) {
-    fatal("GitHub sign-in could not start (HTTP " + codeRes.status + "). Try again in a moment.");
+    fatal(codeRes.status === 429
+      ? "GitHub is still busy after several tries (HTTP 429). Wait a minute or two and click Sign in again."
+      : "GitHub sign-in could not start (HTTP " + codeRes.status + "). Try again in a moment.");
     $("btn-signin").disabled = false;
     return;
   }
@@ -299,7 +317,19 @@ async function startSignIn() {
       $("signin-status").textContent = "Connection hiccup, retrying…";
       continue;
     }
-    const tok = await tokRes.json();
+    if (tokRes.status === 429 || tokRes.status >= 500) {
+      $("signin-status").textContent = "GitHub is busy, retrying…";
+      interval += 2000;
+      continue;
+    }
+    let tok;
+    try {
+      tok = await tokRes.json();
+    } catch (e) {
+      $("signin-status").textContent = "Connection hiccup, retrying…";
+      continue;
+    }
+    $("signin-status").textContent = "Waiting for you to approve on GitHub…";
     if (tok.access_token) {
       accessToken = tok.access_token;
       const userRes = await gh("/user");
