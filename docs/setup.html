@@ -77,6 +77,17 @@
     vertical-align: -2px; margin-right: 6px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .bookmarklet {
+    display: inline-block; background: var(--accent); color: #fff; text-decoration: none;
+    font-weight: 600; padding: 6px 14px; border-radius: 8px; cursor: grab; border: 1px solid var(--accent2);
+    margin-left: 4px;
+  }
+  .bookmarklet:hover { background: var(--accent2); }
+  ol.how { margin: 0 0 14px; padding-left: 22px; }
+  ol.how li { margin-bottom: 10px; }
+  .dim { color: var(--dim); font-size: 0.9rem; }
+  .pasted { color: var(--green); font-size: 0.88rem; margin: 6px 0 0; }
+  .paste-note { color: var(--dim); font-size: 0.88rem; margin: 6px 0 0; }
   .account-block { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 12px 0; }
   .account-block h3 { font-size: 0.95rem; margin: 0 0 8px; }
   .remove-account { float: right; }
@@ -128,8 +139,14 @@
   <!-- STEP 3: accounts -->
   <section class="panel" id="panel-accounts" hidden>
     <h2>Step 3 — Your GoMining account(s)</h2>
-    <p>For each account: use the <a href="cookie-tool.html" target="_blank" rel="noopener">cookie capture tool</a> first (it opens in a new tab, so you won't lose your place here), then paste what it copied below.</p>
-    <p class="warn"><strong>Tip — use a private window for this.</strong> GoMining changes your login every time it's used, so if the automation and your everyday browser share one login, they can knock each other out. Open a private/incognito window, log into GoMining there, run the tool, then simply close the window. (Don't click "Log out" first — that may end the session you just captured.)</p>
+    <p>You'll grab your GoMining login with a one-click bookmark. No DevTools, no copying values by hand.</p>
+    <ol class="how">
+      <li><strong>One time only:</strong> drag this button up to your bookmarks bar → <a id="bookmarklet-link" class="bookmarklet" href="javascript:(function () { var HOST_OK = /(^|[.])gomining[.]com$/; function toast(msg, bad) { try { var d = document.createElement('div'); d.textContent = msg; d.setAttribute('style', 'position:fixed;z-index:2147483647;top:16px;right:16px;max-width:380px;padding:12px 16px;border-radius:8px;font:14px/1.45 sans-serif;color:#fff;box-shadow:0 4px 16px rgba(0,0,0,.35);background:' + (bad ? '#b62324' : '#1a7f37')); document.body.appendChild(d); setTimeout(function () { if (d.parentNode) { d.parentNode.removeChild(d); } }, 10000); } catch (e) { alert(msg); } } if (!HOST_OK.test(location.hostname)) { toast('Open this on app.gomining.com while logged in, then click it again.', true); return; } function get(name) { var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)')); return m ? m[1] : null; } var access = get('access_token'); var refresh = get('refresh_token'); if (!access || !refresh) { toast('Could not find your login cookies. Make sure you are logged into GoMining in this tab, then click again.', true); return; } var expires = Math.floor(Date.now() / 1000) + 31536000; function cookie(name, value) { return { name: name, value: value, domain: '.gomining.com', path: '/', expires: expires, httpOnly: false, secure: true, sameSite: 'Lax' }; } var json = JSON.stringify([cookie('access_token', access), cookie('refresh_token', refresh)]); function copiedOk() { toast('\u2713 Copied! Now go back to the ServiceTap setup page and paste it (Ctrl+V / Cmd+V) - or, if it is open, it may fill in by itself.', false); } function manual() { window.prompt('Could not copy automatically. Select all, copy (Ctrl/Cmd+C), then paste it into the ServiceTap setup page:', json); } function legacyCopy() { try { var t = document.createElement('textarea'); t.value = json; t.setAttribute('style', 'position:fixed;top:0;left:0;opacity:0'); document.body.appendChild(t); t.focus(); t.select(); var ok = document.execCommand('copy'); document.body.removeChild(t); return ok; } catch (e) { return false; } } if (navigator.clipboard &amp;&amp; navigator.clipboard.writeText) { navigator.clipboard.writeText(json).then(copiedOk, function () { if (legacyCopy()) { copiedOk(); } else { manual(); } }); } else if (legacyCopy()) { copiedOk(); } else { manual(); } })();">📋 Capture GoMining Cookies</a></li>
+      <li>Open a <strong>private / incognito window</strong> and log into <a href="https://app.gomining.com" target="_blank" rel="noopener">app.gomining.com</a>.
+        <span class="dim">Why private? GoMining changes your login every time it's used, so if the automation and your everyday browser share one login they can knock each other out. Afterwards just close the window — don't click "Log out".</span></li>
+      <li>Click the bookmark. A green <em>Copied!</em> note appears on the GoMining page.</li>
+      <li>Come back to this tab. Your login fills in below by itself — or press <strong>Paste from clipboard</strong> (the first time, your browser asks permission to read the clipboard; allow it).</li>
+    </ol>
     <div id="account-blocks"></div>
     <button class="secondary" id="btn-add-account" type="button">+ Add another account</button>
     <hr style="border-color:var(--border); margin:16px 0;">
@@ -377,15 +394,93 @@ function addAccountBlock(defaultLabel) {
       <input type="text" class="acct-label" value="${defaultLabel}">
     </label>
     <label class="field">
-      <span>Paste what the cookie capture tool copied</span>
-      <textarea class="acct-cookies" placeholder='[{"name":"access_token",...}, ...]'></textarea>
+      <span>Your GoMining login (from the bookmark)</span>
+      <textarea class="acct-cookies" placeholder='Fills in automatically after you click the bookmark on GoMining — or paste it here'></textarea>
     </label>
+    <div class="row">
+      <button type="button" class="secondary paste-btn">📋 Paste from clipboard</button>
+      <span class="pasted" hidden>✓ Login received</span>
+    </div>
+    <p class="paste-note" hidden></p>
   `;
   $("account-blocks").appendChild(div);
   div.querySelector("[data-remove]")?.addEventListener("click", (e) => {
     document.getElementById(e.target.dataset.remove).remove();
   });
+  div.querySelector(".paste-btn").addEventListener("click", () => pickUpFromClipboard(true, div));
+  div.querySelector(".acct-cookies").addEventListener("input", () => syncPastedBadge(div));
 }
+
+// ---- Step 3: picking the login up from the clipboard --------------------------------------
+// The bookmark copies the login to the OS clipboard, which works even across a private window
+// (a separate browser session can't talk to this tab any other way). We read it back only:
+//   - when the user presses "Paste from clipboard" (the browser asks permission the first time), or
+//   - automatically when this tab regains focus, but ONLY if that permission was already granted.
+// Anything on the clipboard that doesn't look like our login JSON is ignored and never stored.
+function looksLikeLoginJson(text) {
+  try {
+    const arr = JSON.parse(text);
+    return Array.isArray(arr) && ["access_token", "refresh_token"].every((n) =>
+      arr.some((c) => c && c.name === n && typeof c.value === "string" && c.value));
+  } catch (e) {
+    return false;
+  }
+}
+function syncPastedBadge(block) {
+  const has = looksLikeLoginJson(block.querySelector(".acct-cookies").value.trim());
+  block.querySelector(".pasted").hidden = !has;
+}
+function setPasteNote(block, msg) {
+  const p = block.querySelector(".paste-note");
+  p.textContent = msg || "";
+  p.hidden = !msg;
+}
+function blockToFill() {
+  return [...document.querySelectorAll(".account-block")].find((b) => !b.querySelector(".acct-cookies").value.trim()) || null;
+}
+async function pickUpFromClipboard(userInitiated, preferBlock) {
+  // A press of a specific box's button fills THAT box; an automatic pickup fills the first empty one.
+  const block = userInitiated && preferBlock ? preferBlock : blockToFill();
+  if (!block) return false;
+  if (!navigator.clipboard || !navigator.clipboard.readText) {
+    if (userInitiated) setPasteNote(block, "Your browser won't let this page read the clipboard — click in the box and press Ctrl+V (Cmd+V on Mac) instead.");
+    return false;
+  }
+  let text;
+  try {
+    text = (await navigator.clipboard.readText()).trim();
+  } catch (e) {
+    if (userInitiated) setPasteNote(block, "Couldn't read the clipboard (permission denied?) — click in the box and press Ctrl+V (Cmd+V on Mac) instead.");
+    return false;
+  }
+  if (!looksLikeLoginJson(text)) {
+    if (userInitiated) setPasteNote(block, "Nothing that looks like a GoMining login is on your clipboard yet — click the bookmark while on app.gomining.com first.");
+    return false;
+  }
+  // Don't put the same login into a second account's box.
+  const already = [...document.querySelectorAll(".acct-cookies")].some((t) => t !== block.querySelector(".acct-cookies") && t.value.trim() === text);
+  if (already) {
+    if (userInitiated) setPasteNote(block, "That's the same login already used for another account — capture the other account first.");
+    return false;
+  }
+  block.querySelector(".acct-cookies").value = text;
+  setPasteNote(block, "");
+  syncPastedBadge(block);
+  return true;
+}
+async function autoPickUpOnFocus() {
+  if ($("panel-accounts").hidden) return;
+  if (!blockToFill()) return;
+  try {
+    const st = await navigator.permissions.query({ name: "clipboard-read" });
+    if (st.state !== "granted") return; // never trigger a permission prompt on our own
+  } catch (e) {
+    return; // browser can't tell us (e.g. Firefox) -> stick to the explicit button
+  }
+  pickUpFromClipboard(false, null);
+}
+window.addEventListener("focus", autoPickUpOnFocus);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") autoPickUpOnFocus(); });
 
 // ---- Step 4: configure (secrets + workflow file) -----------------------------------------
 function logLine(msg, cls) {
@@ -463,9 +558,11 @@ async function runConfigure() {
     const raw = b.querySelector(".acct-cookies").value.trim();
     if (!label) { fatal("Every account needs a label."); return; }
     let parsed;
-    try { parsed = JSON.parse(raw); } catch { fatal(`Account "${label}": that doesn't look like valid JSON from the cookie tool.`); return; }
-    if (!Array.isArray(parsed) || parsed.length !== 3 || !parsed.every((c) => c && c.name && c.value)) {
-      fatal(`Account "${label}": expected 3 cookies from the cookie capture tool, got something else. Re-run the tool and paste its result again.`);
+    try { parsed = JSON.parse(raw); } catch { fatal(`Account "${label}": that doesn't look like the login the bookmark copies. Click the bookmark on app.gomining.com again and paste the result.`); return; }
+    // Two cookies are required (access_token, refresh_token). Extra ones (e.g. a hand-added
+    // cf_clearance) are kept, but not needed: the automation's browser is issued its own.
+    if (!looksLikeLoginJson(JSON.stringify(parsed))) {
+      fatal(`Account "${label}": that's missing the GoMining login (it needs both an access_token and a refresh_token). Click the bookmark on app.gomining.com again and paste the result.`);
       return;
     }
     accounts.push({ label, cookiesJson: JSON.stringify(parsed) });

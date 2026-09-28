@@ -38,12 +38,11 @@ and follow its steps. It signs you into GitHub (the same device sign-in
 method the official `gh` command-line tool uses — you approve on GitHub's
 own site, never here), then forks this repo, writes your GitHub Secret, and
 edits the workflow file for you, ending with a real test run so you know it
-worked. You'll still need two things partway through, and the wizard walks you
-through both: the
-[cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
-(use a private window — see its tip), and one GitHub token made from a
-pre-filled form (GitHub doesn't let a website create it for you). Your GitHub sign-in never
-touches your GoMining password, and vice versa — they're two completely
+worked. Two things happen partway through, and the wizard walks you through
+both: a one-click bookmark that grabs your GoMining login (do it in a private
+window — the wizard explains why), and one GitHub token made from a pre-filled
+form (GitHub doesn't let a website create it for you). Your GitHub sign-in
+never touches your GoMining password, and vice versa — they're two completely
 separate logins.
 
 If you'd rather do it by hand, or want to understand what the wizard is
@@ -91,14 +90,23 @@ env:
 You never enter your GoMining password anywhere in this repo or its
 secrets, only session cookies, captured from a real logged-in browser.
 
-**Easiest: the cookie capture tool (recommended).** Visit
-[the cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
-and follow its 3 steps. It's a bookmarklet — a button you drag to your
-bookmarks bar once — that reads most of what's needed on its own and
-only asks you to look up one value by hand (GoMining locks that one
-down so a webpage can't read it automatically), then copies the
-finished, correctly-formatted result straight to your clipboard, ready
-to paste into step 4 below.
+**Easiest: the cookie capture tool (recommended).** The
+[setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
+has it built in; the standalone
+[cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
+is the same thing for setting up by hand or re-capturing a login later. It's
+a bookmarklet — a button you drag to your bookmarks bar once. Log into
+GoMining (in a private window), click it, and the correctly-formatted login
+is on your clipboard, ready to paste into step 4 below. No DevTools, nothing
+to copy by hand.
+
+It copies two cookies, `access_token` and `refresh_token`. A third,
+`cf_clearance`, is Cloudflare's own and can't be read by any webpage, but the
+automation doesn't need yours: from a GitHub Actions runner with no login at
+all, GoMining's Cloudflare let every page and API call through and issued the
+runner's browser its own `cf_clearance` automatically (verified 2026-09-27).
+If a run ever does report a Cloudflare block, add one from DevTools by hand
+(see the manual method below).
 
 **If you're using Claude Code:** this repo ships a
 `capture-cookies` skill (`.claude/skills/capture-cookies/SKILL.md`) that
@@ -118,8 +126,9 @@ worth working around client-side. The script was removed for that reason.
 1. Log into <https://app.gomining.com> normally
 2. Open DevTools (F12) → **Application** tab → **Storage → Cookies** →
    `https://app.gomining.com`
-3. Note the values for these three cookie names: `access_token`,
-   `refresh_token`, `cf_clearance`
+3. Note the values for `access_token` and `refresh_token`. (`cf_clearance` is
+   normally not needed — see above — but if a run reports a Cloudflare block,
+   include it too, with `"httpOnly": true, "sameSite": "None"`.)
 4. Build a JSON array from them, one object per cookie, matching this shape:
    ```json
    [{"name": "access_token", "value": "...", "domain": ".gomining.com", "path": "/", "expires": 1234567890, "httpOnly": false, "secure": true, "sameSite": "Lax"}]
@@ -301,6 +310,12 @@ multi-account `gh` CLI quirk worth knowing about.
 The setup wizard (`docs/setup.html`) has its own tiny backend —
 `setup-wizard/worker/`, a Cloudflare Worker — see its own README for what it
 does and how to redeploy it.
+
+The cookie bookmarklet appears on two pages (`docs/setup.html` and
+`docs/cookie-tool.html`), both built from one source,
+`setup-wizard/bookmarklet/bookmarklet.src.js`. Edit that file, then run
+`python setup-wizard/bookmarklet/build.py` (`--check` to verify the pages are
+current); never edit the `javascript:` link in the HTML by hand.
 
 ## A note on storing session cookies
 
