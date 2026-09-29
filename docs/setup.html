@@ -487,9 +487,33 @@ function looksLikeLoginJson(text) {
     return false;
   }
 }
+// The bookmarklet stamps each cookie's `expires` as "the moment it was captured, plus a year" --
+// so that field also tells us how OLD a pasted login is, without needing to compare it against
+// anything already stored. Catches the case where the clipboard still holds an old, already-used
+// capture (e.g. after a failed test) and it gets silently resubmitted, looking like a fix when
+// nothing actually changed.
+function captureAgeSeconds(text) {
+  try {
+    const arr = JSON.parse(text);
+    const c = arr.find((x) => x && x.name === "access_token" && typeof x.expires === "number");
+    if (!c) return null;
+    return Math.max(0, Math.round(Date.now() / 1000 - (c.expires - 31536000)));
+  } catch (e) {
+    return null;
+  }
+}
 function syncPastedBadge(block) {
-  const has = looksLikeLoginJson(block.querySelector(".acct-cookies").value.trim());
+  const text = block.querySelector(".acct-cookies").value.trim();
+  const has = looksLikeLoginJson(text);
   block.querySelector(".pasted").hidden = !has;
+  if (!has) return;
+  const age = captureAgeSeconds(text);
+  if (age !== null && age > 300) {
+    const mins = Math.round(age / 60);
+    setPasteNote(block, `This login was captured ${mins} minute${mins === 1 ? "" : "s"} ago. If you're fixing a failed run, click the bookmark on GoMining again for a fresh one before saving.`);
+  } else {
+    setPasteNote(block, "");
+  }
 }
 function setPasteNote(block, msg) {
   const p = block.querySelector(".paste-note");
