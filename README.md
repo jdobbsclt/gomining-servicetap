@@ -1,76 +1,57 @@
 # GoMining ServiceTap
 
 Automatically taps GoMining's daily "maintenance" (service) button for one or
-more accounts, so your maintenance-discount streak never lapses, even if
-your computer is off. Runs entirely on GitHub Actions (free tier is plenty).
-Also includes an optional weekly job that re-extends your veGOMINING lock(s)
-so their votes don't decay (see step 8 below).
+more accounts, so your maintenance-discount streak never lapses — even if
+your computer is off. Runs on GitHub Actions (free tier is plenty). Also
+includes an optional weekly job that re-extends your veGOMINING lock(s) so
+their votes don't decay (see "Weekly lock re-extend" below).
 
 ## How it works
 
-- Runs several times a day via GitHub Actions (cloud-hosted, works even if
-  your PC is off)
-- Authenticates using saved browser session cookies, **never your password**
-- Skips gracefully if the button is already on cooldown for the day
-- **Self-refreshing**: after every successful run, it saves the account's
-  *current* cookies back to the secret. This matters: GoMining appears to
-  rotate its refresh token on use, so a cookie captured once and never
-  updated will work exactly once and then permanently fail.
-- If a saved session ever truly expires, the run fails and GitHub
-  automatically emails you
+- Runs several times a day via GitHub Actions, cloud-hosted
+- Authenticates with saved browser session cookies — never your password
+- Skips gracefully if the button's already on cooldown
+- Self-refreshing: GoMining rotates the login on every use, so each run
+  saves the new one back automatically. Without this, a captured login
+  works once and then fails for good.
+- A session that truly dies fails the run and GitHub emails you
 
-### The reset mechanic
-
-The maintenance discount resets on a **fixed UTC calendar-day boundary
-(00:00 UTC)**, not a rolling 24-hour cooldown from your last click, confirmed
-via [GoMining's own FAQ](https://help.nft.gomining.com/faq/maintenance-fees-and-discounts).
-Missing an entire UTC day resets your whole accumulated streak, not just that
-day's increment, which is why this runs multiple times a day rather than
-once: GitHub's own scheduler is documented as best-effort and can delay or
-occasionally drop an individual run, so more independent attempts per day
-meaningfully lowers the odds of a full miss.
+**Why it runs multiple times a night:** the discount resets on a fixed UTC
+calendar-day boundary (00:00 UTC), not a rolling 24 hours from your last
+click ([GoMining's FAQ](https://help.nft.gomining.com/faq/maintenance-fees-and-discounts)).
+Missing a whole UTC day resets the entire streak, not just that day.
+GitHub's scheduler is best-effort and can skip a slot, so several
+independent attempts a night meaningfully cut the odds of missing one
+entirely.
 
 ## One-time setup
 
-**Easiest: the setup wizard (recommended).** Visit
-[the setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
-and follow its steps. It signs you into GitHub (the same device sign-in
-method the official `gh` command-line tool uses — you approve on GitHub's
-own site, never here), then forks this repo, writes your GitHub Secret, and
-edits the workflow file for you, ending with a real test run so you know it
-worked. The only manual part is a one-click bookmark that grabs your
-GoMining login (do it in a private window — the wizard explains why); there's
-no GitHub token to create. GoMining changes your login every time it's used,
-so the wizard also sets your fork up to keep the refreshed one in GitHub's
-own encrypted Actions cache automatically, between runs, forever — nothing
-to renew. Your GitHub sign-in never touches your GoMining password, and vice
-versa — they're two completely separate logins.
+### The wizard (recommended)
 
-If your automation ever stops working (GoMining invalidated the saved
-login, or GitHub paused the schedule after a long stretch of no activity),
-sign into [the wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
-again with the same GitHub account — it recognizes your existing fork and
-goes straight to fixing it (a fresh cookie capture, a re-enabled schedule)
-instead of trying to fork it again.
+[Open the setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
+and follow it. It signs you into GitHub (the same device-flow sign-in the
+`gh` CLI uses — you approve on GitHub's own site), forks this repo, walks
+you through a one-click bookmark that grabs your GoMining login, writes your
+secrets, and runs a real test. No GitHub token to create — it sets your
+fork to keep the refreshed login in GitHub's own encrypted Actions cache
+instead. Your GitHub sign-in and GoMining login never touch each other.
 
-If you'd rather do it by hand, or want to understand what the wizard is
-doing for you, here are the same steps manually:
+**If it ever breaks:** sign into the wizard again with the same GitHub
+account. It recognizes your existing fork and goes straight to fixing it —
+a fresh login, or waking a paused schedule — instead of trying to fork
+again.
+
+The rest of this section is the same setup by hand, for anyone who'd
+rather skip the wizard or see what it's doing.
 
 ### 1. Fork this repo
 
-Click **Fork** near the top of
-[this repo's GitHub page](https://github.com/jdobbsclt/gomining-servicetap).
-Public or private, doesn't matter. (Forking, not GitHub's "Use this
-template" option, is what keeps the one-click **Sync fork** button
-working later — see "Staying up to date" below — so future bug fixes
-don't need a manual copy-paste.)
+Click **Fork**, not "Use this template" — forking keeps the one-click
+**Sync fork** button working later (see "Staying up to date").
 
-### 2. Set your account label
+### 2. Set your account label(s)
 
-#### <u>Automating one account</u>
-
-Most people only need to automate one account. Edit
-`.github/workflows/maintenance.yml`:
+Edit `.github/workflows/maintenance.yml`:
 
 ```yaml
 env:
@@ -78,13 +59,9 @@ env:
   GOMINING_COOKIES_MAIN: ${{ secrets.GOMINING_COOKIES_MAIN }}
 ```
 
-`MAIN` is just an example. Any short label works, it just has to match
-between the two lines.
-
-#### <u>Automating more than one account</u>
-
-Add a comma-separated label for each account, plus a matching
-`GOMINING_COOKIES_<LABEL>` line:
+`MAIN` is just an example label — any short name works as long as it
+matches between the two lines. For more than one account, comma-separate
+the labels and add a matching `GOMINING_COOKIES_<LABEL>` line for each:
 
 ```yaml
 env:
@@ -93,311 +70,224 @@ env:
   GOMINING_COOKIES_SECONDARY: ${{ secrets.GOMINING_COOKIES_SECONDARY }}
 ```
 
-### 3. Capture your account's session cookies
+### 3. Capture your session cookies
 
-You never enter your GoMining password anywhere in this repo or its
-secrets, only session cookies, captured from a real logged-in browser.
+Never your password — just the two session cookies (`access_token`,
+`refresh_token`) that keep you logged in.
 
-**Easiest: the cookie capture tool (recommended).** The
-[setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
-has it built in; the standalone
-[cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
-is the same thing for setting up by hand or re-capturing a login later. It's
-a bookmarklet — a button you drag to your bookmarks bar once. Log into
-GoMining (in a private window), click it, and the correctly-formatted login
-is on your clipboard, ready to paste into step 4 below. No DevTools, nothing
-to copy by hand.
+**Easiest: the cookie tool.**
+[Open it](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html)
+(also built into the wizard) and drag the bookmark to your bar, once. Log
+into GoMining in a private window, click the bookmark, and the login is on
+your clipboard — paste it into step 4. No DevTools.
 
-It copies two cookies, `access_token` and `refresh_token`. A third,
-`cf_clearance`, is Cloudflare's own and can't be read by any webpage, but the
-automation doesn't need yours: from a GitHub Actions runner with no login at
-all, GoMining's Cloudflare let every page and API call through and issued the
-runner's browser its own `cf_clearance` automatically (verified 2026-09-27).
-If a run ever does report a Cloudflare block, add one from DevTools by hand
-(see the manual method below).
+A third cookie, `cf_clearance`, isn't needed: it's Cloudflare's own (no
+webpage can read it), and a GitHub Actions runner gets issued its own
+automatically — verified 2026-09-27 from a runner with no prior login at
+all. If a run ever does report a Cloudflare block, add one by hand (see
+the manual method below).
 
-**If you're using Claude Code:** this repo ships a
-`capture-cookies` skill (`.claude/skills/capture-cookies/SKILL.md`) that
-walks Claude through doing this for you interactively — it drives a real,
-visible browser, you complete the "Continue with Google" login yourself,
-and Claude pushes the resulting session straight to the right GitHub
-secret. Just ask Claude to capture cookies for an account. This is also
-the fix to run whenever a scheduled run reports "session expired".
+**Using Claude Code?** The `capture-cookies` skill
+(`.claude/skills/capture-cookies/SKILL.md`) drives a real browser for you —
+you complete the Google login yourself, Claude pushes the session straight
+to the right secret. Ask Claude to "capture cookies for an account." Also
+the fix for a "session expired" failure. (A scripted, no-browser version of
+this used to ship as `recapture.py`; Google now blocks automated Google
+logins outright, so it was removed.)
 
-Note: a standalone scripted version of this (`recapture.py`) used to ship
-in this repo, but Google now reliably blocks automated ("Continue with
-Google") logins driven by a script with "This browser or app may not be
-secure" — it's a deliberate Google anti-automation policy, not something
-worth working around client-side. The script was removed for that reason.
-
-**Manual method (fallback — any browser, no bookmarklet):**
-1. Log into <https://app.gomining.com> normally
-2. Open DevTools (F12) → **Application** tab → **Storage → Cookies** →
+**Manual method (any browser, no bookmarklet):**
+1. Log into <https://app.gomining.com>
+2. DevTools (F12) → **Application** → **Storage → Cookies** →
    `https://app.gomining.com`
-3. Note the values for `access_token` and `refresh_token`. (`cf_clearance` is
-   normally not needed — see above — but if a run reports a Cloudflare block,
-   include it too, with `"httpOnly": true, "sameSite": "None"`.)
-4. Build a JSON array from them, one object per cookie, matching this shape:
+3. Note `access_token` and `refresh_token` (`cf_clearance` only if a run
+   reports a Cloudflare block — see above)
+4. Build a JSON array:
    ```json
    [{"name": "access_token", "value": "...", "domain": ".gomining.com", "path": "/", "expires": 1234567890, "httpOnly": false, "secure": true, "sameSite": "Lax"}]
    ```
-   (`domain`/`httpOnly`/`secure`/`sameSite` are visible as columns in the
-   same DevTools cookie table.)
+   (`domain`/`httpOnly`/`secure`/`sameSite` are columns in the same
+   DevTools table.)
 
 ### 4. Add the GitHub Secrets
 
-*(The wizard does this step for you, in cache mode — see below. This is for
-setting up by hand.)*
+**Settings → Secrets and variables → Actions → New repository secret.**
 
-In your repo: **Settings → Secrets and variables → Actions → New repository
-secret**.
+- One `GOMINING_COOKIES_<LABEL>` secret per account, the JSON array from
+  step 3
 
-- One `GOMINING_COOKIES_<LABEL>` secret per account, paste the JSON array
-  from step 3
+GoMining rotates the login on every use, so something has to save the new
+one back each run — pick one:
 
-GoMining changes your login every time it's used, so something has to save
-the new one back after each run. Two ways to do that — pick one:
-
-**No token (what the wizard sets up):** in `.github/workflows/maintenance.yml`
-(and `lock_extend.yml` if you use it), add:
+**No token (what the wizard sets up).** In `maintenance.yml` (and
+`lock_extend.yml` if you use it), swap the `GH_TOKEN` line for:
 ```yaml
 COOKIE_STORE: cache
 COOKIE_CACHE_KEY: ${{ secrets.COOKIE_CACHE_KEY }}
 ```
-and remove the `GH_TOKEN` line. Add a `COOKIE_CACHE_KEY` secret: it has to be
-a real Fernet key (a random string won't work — the script checks this and
-refuses to run rather than fail silently), generate one with
+`COOKIE_CACHE_KEY` has to be a real Fernet key, not any random string (the
+script checks and refuses to run on a bad one):
 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-(needs `pip install cryptography` locally) and paste its output exactly. The
-refreshed login is then kept, encrypted with that key, in GitHub's own
-Actions cache between runs — nothing to renew, ever.
+— paste the output exactly. The refreshed login then lives, encrypted with
+that key, in GitHub's own Actions cache. Nothing to renew.
 
-**Personal access token (the original method, still supported):**
-- `GH_PAT_SECRETS_WRITE`, a **fine-grained**
-  GitHub personal access token, scoped to **only this repo**, with **Secrets:
-  read and write** permission and nothing else. This token is what lets the
-  script save the new login back to the secrets above after each run.
-  [This link opens the token form with the
-  name, permission and a one-year expiry already filled
-  in](https://github.com/settings/personal-access-tokens/new?name=ServiceTap+self-refresh&expires_in=365&secrets=write)
-  — you still have to switch **Repository access** to "Only select
-  repositories" and pick your fork yourself (GitHub can't pre-fill that part,
-  and the form **defaults to "All repositories"**, which would let the token
-  write secrets to every repo you own — don't skip this). It expires after a
-  year, so set a reminder to renew it.
+**Personal access token (the original method).** A fine-grained
+`GH_PAT_SECRETS_WRITE` token, scoped to only this repo, **Secrets: read and
+write** and nothing else.
+[Pre-filled token form](https://github.com/settings/personal-access-tokens/new?name=ServiceTap+self-refresh&expires_in=365&secrets=write)
+— still switch **Repository access** to "Only select repositories" and
+pick your fork yourself; the form defaults to "All repositories," which
+would let the token touch every repo you own. Expires in a year — set a
+reminder.
 
 ### 5. Test it
 
 **Actions** tab → "Daily Service Button Tap" → **Run workflow**. Check the
-log: you want to see `OK` for every account, not `FAILED`.
+log for `OK` on every account.
 
 ### 6. Let it run
 
-From here it's fully automated on the schedule in
-`.github/workflows/maintenance.yml`.
+Fully automated from here, on the schedule in `maintenance.yml`.
 
-**Give it a day or two before worrying.** It's normal (not a sign anything's
-misconfigured) for the first scheduled run(s) after setup to be late or not
-fire at all. GitHub's scheduler is documented as best-effort (individual runs
-can lag 15-45+ minutes, or occasionally skip a slot), and in our own testing
-the very first scheduled workflow we ever created took over 24 hours to fire
-even once. It reliably got more consistent once the schedule had simply
-existed, untouched, for a while. This is exactly why the workflow runs 7
-times a night instead of once: one flaky slot doesn't matter when 6 more are
-coming. The same adjustment period tends to happen again after *any* edit to
-the schedule, not just the first setup. See `CLAUDE.md` if you change it and
-runs seem to go quiet for a bit.
+**Give it a day or two before worrying.** GitHub's scheduler is
+best-effort — a first run can lag or not fire at all (ours once took over
+24 hours), and it settles down once the schedule's existed a while. Same
+adjustment period after any edit to the cron. See `CLAUDE.md` if runs go
+quiet.
 
-### 7. (Optional) Add Sentry error monitoring
+## Optional: Sentry error monitoring
 
-The script and workflow work fully without this. It's just better
-visibility. Two things Sentry adds that GitHub's own failure emails can't:
-searchable error history/trends across runs, and, the more important one,
-detecting when the schedule **fails to fire at all**. GitHub only emails you
-about a run that started and failed; a run that never started produces
-nothing. Sentry's cron monitor alerts if no check-in arrives within the
-expected window, closing that gap.
+Works fine without it. What it adds: searchable error history, and — the
+real reason to bother — catching a schedule that **never fires at all**,
+which produces no email since nothing started.
 
-1. Create a free Sentry project (any org) and grab its DSN
-2. Add it as a repository secret named `SENTRY_DSN`
-3. That's it: `gomining_maintenance.py` picks it up automatically next run
+1. Create a free Sentry project, grab its DSN
+2. Add it as repo secret `SENTRY_DSN`
+3. Done — `gomining_maintenance.py` picks it up next run
 
-If you skip this, everything still works, you just rely on GitHub's
-failure emails alone, which is exactly what this repo ran on for a while.
+## Optional: Weekly veGOMINING lock re-extend
 
-### 8. (Optional) Weekly veGOMINING lock re-extend
+GoMining's Governance → My Lock lets you push a lock's end date back to the
+platform max; its votes (and the discount days it covers) decay if you
+don't, roughly weekly. `lock_extend.yml` automates that click, reusing the
+same saved session as the daily tap.
 
-GoMining's Governance → My Lock lets you push a lock's end date back out to
-the platform's max period; its votes (and the maintenance-discount days it
-covers) decay if you don't do this roughly every week. `lock_extend.yml`
-automates that "re-max" click on a weekly schedule, reusing the exact same
-saved session as the daily tap.
+**Ships live — disable it if you don't want it.** It's written for this
+repo's own `PRIMARY,SECONDARY` layout, so a fresh fork running it fails and
+emails you. The wizard disables it on your copy automatically; if you
+forked by hand, turn it off yourself — **Actions** tab → "Weekly Lock
+Re-extend" → **⋯** → **Disable workflow**.
 
-**Heads up — this workflow ships in the repo with a live schedule, so a copy
-of the repo will run it every Saturday unless you turn it off.** It's
-written for a two-account `PRIMARY,SECONDARY` layout (this repo's own), so on
-anyone else's copy it fails and emails them. The setup wizard turns it off
-on your copy for you. If you forked by hand and don't want it, disable it now:
-**Actions** tab → "Weekly Lock Re-extend" → **⋯** → **Disable workflow**. (The
-daily tap workflow itself never touches locks.) To actually use it:
+To use it:
+1. In `lock_extend.yml`, set the account labels to match `maintenance.yml`,
+   then re-enable the workflow. Default schedule is Saturday ~11am ET —
+   edit the `cron` line to change it.
+2. Optional: `LOCK_SKIP_THRESHOLD_<LABEL>: "<GMT amount>"` in the `env:`
+   block leaves any position on that account under that many GMT alone
+   (e.g. a small dust position). Unset = every position gets re-extended.
+3. Test before trusting the schedule: **Actions** tab → "Weekly Lock
+   Re-extend" → **Run workflow**. Confirm `Lock re-extend: OK` in the log
+   and that the position actually moved on GoMining's own page.
 
-1. In `.github/workflows/lock_extend.yml`, change the account labels in the
-   `env:` block to match yours (same labels as `maintenance.yml`), then
-   re-enable the workflow. The schedule defaults to Saturday ~11am ET;
-   change the `cron` line if you want a different day/time.
-2. **Optional per-account skip threshold**: if an account holds more than one
-   lock position and you want small ones left alone (e.g. a dust position
-   you don't want auto-extended), add a
-   `LOCK_SKIP_THRESHOLD_<LABEL>: "<GMT amount>"` line to the workflow's
-   `env:` block — any position on that account under that many GMT is
-   skipped. Leave it unset for an account and every position on it is
-   re-extended.
-3. **Test it before trusting the schedule**: **Actions** tab → "Weekly Lock
-   Re-extend" → **Run workflow**. Check the log for `Lock re-extend: OK`, and
-   confirm the position(s) you expected to change actually moved on
-   GoMining's own My Lock page.
-
-Safety notes, since this clicks a real financial action (extending how long
-GMT stays locked), not just a routine daily button:
-
-- Each position's new state is **verified against GoMining's own account
-  data** afterward (the position's days-to-expire must have actually grown),
-  not just whether the clicks appeared to complete. A click sequence that
-  "succeeds" but doesn't move the account's real lock is treated as a
-  failure, not a silent success.
-- A failure on one position is reported (the same way a tap failure is —
-  GitHub email, plus Sentry if configured) and does not stop the other
-  positions or accounts in the same run.
-- It navigates straight to each position's own edit page (read from
-  GoMining's own position-list API response) rather than clicking through
-  the My Lock overview page's row list, so it isn't relying on that page's
-  row markup, which is unversioned and could change without notice.
-- A position already at (or within about a week of) the platform's max
-  period is left alone and counted as OK, not a failure — GoMining's own
-  page drops the "Max" quick-pick in that state (only a "Custom" date
-  picker remains), since there's nothing left to gain by re-extending it
-  today. A 0-GMT position (an empty/closed lock, still listed by the API)
-  is always skipped too, regardless of any threshold.
+Since this is a real financial action, not a routine click:
+- Each position's new state is verified against GoMining's own account
+  data (days-to-expire must have actually grown) — a click sequence that
+  "succeeds" without moving the real lock counts as a failure.
+- One position failing doesn't stop the others in the same run; failures
+  are reported the same way a tap failure is.
+- It navigates straight to each position's edit page from the API's own
+  position list, not by clicking through My Lock's row markup (which could
+  change without notice).
+- A position already at (or within about a week of) the max is left alone
+  and counted OK — GoMining's own page drops the "Max" option at that
+  point. A 0-GMT (closed) position is always skipped.
 
 ## Staying up to date
 
-This repo gets occasional fixes. Your fork **does not update itself** — pull
-changes when you want them:
+Your fork doesn't update itself.
 
-- **One-off:** open your fork on GitHub and click **Sync fork** on the main
-  page. It shows "This branch is N commits behind" when there's something to
-  pull, and merges automatically unless you've edited the same lines an
-  update also changes (you edited the `env:` block of
-  `.github/workflows/maintenance.yml` during setup, so if an update also
-  touches that file, GitHub may ask you to merge it by hand — usually a
-  quick, non-overlapping merge).
+- **One-off:** open your fork, click **Sync fork**. It merges
+  automatically unless an update touches the same lines you edited in
+  `maintenance.yml`'s `env:` block, in which case GitHub asks you to
+  resolve it by hand (usually trivial).
 - **Get notified:** on
   [the upstream repo](https://github.com/jdobbsclt/gomining-servicetap),
-  click **Watch → Custom → Releases** so GitHub emails you when a new
-  version ships.
+  **Watch → Custom → Releases**.
 
-Updates only ever change the script and docs (and occasionally the schedule
-in `maintenance.yml`) — never your GitHub Secrets.
+Updates only ever touch the script, docs, and occasionally the schedule —
+never your Secrets.
 
 ## If a run fails
 
-Each account gets up to 3 attempts within a single run before it's reported
-as failed, so a one-off hiccup (a slow page load, for example) usually
-resolves itself without you ever seeing it. GitHub emails you automatically
-only once a run has actually exhausted its attempts and failed. Check the
-run log first:
+Each account gets 3 attempts per run before it's reported failed, so a
+one-off hiccup usually resolves itself silently. GitHub emails you once a
+run actually exhausts its attempts. Check the log:
 
-- **"session expired"**: that account's saved session is dead — GoMining
-  served its signup page instead of the dashboard. This isn't retried (a
-  dead session fails the same way every time), so you'll see it right away.
-  Fix: re-capture cookies for that account. If you set up with
-  [the wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html),
-  sign in again with the same GitHub account — it recognizes your existing
-  fork and goes straight to a "refresh your login" screen, no re-forking.
-  Otherwise: step 3 above (the
-  [cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html),
-  the `capture-cookies` skill, or the manual DevTools method). GoMining
-  invalidates sessions on their side from time to time, so this is expected
-  occasionally and isn't a bug.
-- **"session expired" right after you turned on 2FA** (on your GoMining
-  account *or* the Google account you sign in with): expected, and only once.
-  Enabling 2FA invalidates existing sessions as a security measure. Re-capture
-  cookies once — you complete the new 2FA step yourself in the browser — and
-  every run after that is back to normal. The nightly tap never logs in (it
-  reuses a saved session), so 2FA has no ongoing effect on it.
-- **Anything else**: a screenshot + HTML snapshot of the page at the moment
-  of failure are uploaded as a `debug-artifacts` workflow artifact, to help
-  figure out what actually happened.
+- **"session expired"**: that account's session is dead. Fix: recapture
+  cookies. Set up with the wizard? Sign in again — it goes straight to a
+  "refresh your login" screen, no re-forking. Otherwise: step 3 above.
+  GoMining invalidates sessions on their end sometimes; this is expected
+  occasionally, not a bug.
+- **"session expired" right after enabling 2FA** (on GoMining or the
+  Google account you sign into): expected once — 2FA invalidates existing
+  sessions. Recapture, and every run after is normal. The nightly tap
+  reuses a saved session and never logs in, so 2FA has no ongoing effect
+  on it.
+- **Anything else**: a screenshot + HTML snapshot at the moment of failure
+  are uploaded as a `debug-artifacts` artifact.
 
-If a scheduled run doesn't fire *at all* (no email, nothing in the Actions
-tab), that's invisible to GitHub's own notifications by design. See step 7
-above (Sentry) if you want to catch that case too.
+A schedule that never fires produces no notification at all — that's what
+Sentry (above) is for.
 
-## Maintainer notes (if you're editing this repo, not just using it)
+## Maintainer notes
 
-See `CLAUDE.md` for operational gotchas learned the hard way: GitHub's
-`schedule` trigger can get "stuck" and needs a disable/re-enable cycle after
-editing the cron, its timing is best-effort by design, and there's a
-multi-account `gh` CLI quirk worth knowing about.
+See `CLAUDE.md` for the operational gotchas: GitHub's `schedule` trigger
+can get "stuck" and needs a disable/re-enable cycle after editing the
+cron, its timing is best-effort, and there's a multi-account `gh` CLI
+quirk worth knowing.
 
-The setup wizard (`docs/setup.html`) has its own tiny backend —
-`setup-wizard/worker/`, a Cloudflare Worker — see its own README for what it
-does and how to redeploy it.
+The wizard (`docs/setup.html`) has its own tiny backend,
+`setup-wizard/worker/` (a Cloudflare Worker) — see its own README.
 
-The cookie bookmarklet appears on two pages (`docs/setup.html` and
-`docs/cookie-tool.html`), both built from one source,
-`setup-wizard/bookmarklet/bookmarklet.src.js`. Edit that file, then run
-`python setup-wizard/bookmarklet/build.py` (`--check` to verify the pages are
-current); never edit the `javascript:` link in the HTML by hand.
+The cookie bookmarklet appears on two pages (`docs/setup.html`,
+`docs/cookie-tool.html`), both built from one source: edit
+`setup-wizard/bookmarklet/bookmarklet.src.js`, then run
+`python setup-wizard/bookmarklet/build.py` (`--check` to verify both pages
+are current). Never hand-edit the `javascript:` link.
 
-## A note on storing session cookies
+## What storing session cookies actually means
 
-This automation works by saving your GoMining session cookies (not your
-password) as encrypted GitHub Secrets. Worth understanding what that
-actually means before you set this up:
+- GitHub encrypts secrets at rest and never displays them again, to
+  anyone, through any interface — they exist as plain text only for the
+  seconds a run is actually executing, inside GitHub's own runner.
+- These cookies are a live session, not your password. Someone with them
+  could act as your logged-in account for as long as the cookies stay
+  valid — like a stolen "stay signed in" session — but couldn't log in
+  fresh, change your password, or pass GoMining's account recovery.
+- Only someone with push access to *your* fork could ever extract one (by
+  adding a workflow step that deliberately reveals it). The thing actually
+  worth protecting is your GitHub account itself — a strong password and
+  2FA.
+- Suspect a leak? Recapture fresh cookies and overwrite the secret, same
+  as you'd treat a stolen "remember me" session.
 
-- **What's protected**: GitHub encrypts secrets at rest and never displays
-  them again once set, not through the website, the API, or any tool,
-  including to you. They only exist as plain text for the few seconds a
-  scheduled run is actually executing, inside GitHub's own cloud runner.
-- **This is not your password**: these cookies grant a *live session*, not
-  your login credentials. Someone who obtained them could act as your
-  logged-in account on GoMining's website for as long as the cookies stay
-  valid, similar to someone stealing a "stay signed in" browser session.
-  They could not log in fresh, change your password, or get past
-  GoMining's own account-recovery process with just these cookies.
-- **Who could actually access them**: only whoever has push access to
-  *your* fork of this repo, since only they could add a workflow step that
-  intentionally reveals a secret's value. In practice, the thing actually
-  worth protecting is your own GitHub account (a strong password and 2FA),
-  not anything specific to this project.
-- **If you ever suspect a leak**: recapture fresh cookies (step 3) and
-  overwrite the old secret right away, treat it like a stolen "remember
-  me" session.
-
-This is a standard risk for any tool that automates a logged-in web
-session on your behalf, it isn't unique to this repo, but you should
-understand it before deciding to use this.
+Standard risk for anything that automates a logged-in session on your
+behalf — not unique to this repo.
 
 ## A note on GoMining's terms
 
-We read GoMining's [Terms of Use](https://gomining.com/terms) directly to
-check this. The terms do prohibit bots/automation in a few places, but each
-one is scoped to a specific feature, not the daily maintenance button:
-Bonus Miner rewards (2.6.6), the Miner Wars "Spell Bot" (4.3.6), the AI
-Assistant (8.4.7d), and raffle/contest entries (10.3). The maintenance
-discount itself (3.1-3.2) has no automation restriction attached to it
-anywhere in the document.
+We read GoMining's [Terms of Use](https://gomining.com/terms) directly.
+Automation is prohibited in a few places, but each is scoped to a specific
+feature — Bonus Miner rewards (2.6.6), the Miner Wars "Spell Bot" (4.3.6),
+the AI Assistant (8.4.7d), raffle/contest entries (10.3) — and the
+maintenance discount itself (3.1–3.2) carries no automation restriction
+anywhere in the document. Automating the daily tap also appears to be a
+fairly common, openly-discussed practice
+([example browser extension](https://gist.github.com/magicdude4eva/11a9b24e2066a5f0198c6df241d5059f)).
 
-Automating your own account's daily maintenance tap also appears to be a
-fairly common, openly-discussed practice in the GoMining community (see e.g.
-[this browser extension that does the same thing](https://gist.github.com/magicdude4eva/11a9b24e2066a5f0198c6df241d5059f)).
-
-That said, the terms (Section 42) also reserve the right to terminate any
-account "for any other reason or no reason," a standard broad clause that
-applies regardless of any specific rule being broken. This isn't legal
-advice, terms can change, and you should check GoMining's current Terms of
-Service yourself before relying on this.
+That said, Section 42 reserves the right to terminate any account "for any
+other reason or no reason" — a standard broad clause, independent of any
+specific rule. Not legal advice; terms change; check GoMining's current
+ToS yourself.
 
 ## License
 

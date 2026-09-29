@@ -171,7 +171,7 @@
   <section class="panel" id="panel-done" hidden>
     <h2>🎉 You're set up</h2>
     <p id="done-summary"></p>
-    <p class="warn">Optional next step: Sentry error monitoring, covered in your new repo's README (step 7) — catches the rare case where the schedule itself fails to fire, which GitHub's own emails can't.</p>
+    <p class="warn">Optional next step: Sentry error monitoring, covered in your new repo's README ("Optional: Sentry error monitoring") — catches the rare case where the schedule itself fails to fire, which GitHub's own emails can't.</p>
   </section>
 
   <footer>
@@ -720,7 +720,7 @@ async function runConfigure() {
       try {
         const dis = await gh(`/repos/${ghLogin}/${REPO_NAME}/actions/workflows/lock_extend.yml/disable`, { method: "PUT" });
         if (dis.ok || dis.status === 204) {
-          logLine("✓ Left off. (You can turn it on later — see step 8 of the README.)", "ok");
+          logLine("✓ Left off. (You can turn it on later — see \"Optional: Weekly veGOMINING lock re-extend\" in the README.)", "ok");
         } else {
           logLine(`Couldn't turn it off automatically (HTTP ${dis.status}). Please disable "Weekly Lock Re-extend" in your repo's Actions tab so it doesn't email you on Saturdays.`, "");
         }
