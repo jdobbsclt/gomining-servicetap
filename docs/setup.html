@@ -712,9 +712,23 @@ async function runConfigure() {
 }
 
 // ---- Step 5: test run ------------------------------------------------------------------
+// GitHub turns GitHub Actions off by default on every freshly forked repo (a security default,
+// nothing to do with this project) -- both a repo-wide switch and this workflow's own state need
+// flipping back on before a dispatch will work. Both calls are safe to repeat, so this runs every
+// time a test starts: it fixes a fresh fork, and re-fixes one someone comes back to later.
+async function enableActionsForFork() {
+  await gh(`/repos/${ghLogin}/${REPO_NAME}/actions/permissions`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled: true }),
+  });
+  await gh(`/repos/${ghLogin}/${REPO_NAME}/actions/workflows/maintenance.yml/enable`, { method: "PUT" });
+}
+
 async function runTest() {
   clearFatal();
   $("btn-test").disabled = true;
+  $("test-status").textContent = "Turning on GitHub Actions for your fork…";
+  await enableActionsForFork();
   $("test-status").textContent = "Starting a test run…";
 
   const dispatchedAt = new Date();
