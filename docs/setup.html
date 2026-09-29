@@ -335,6 +335,17 @@ async function startSignIn() {
       const userRes = await gh("/user");
       const user = await userRes.json();
       ghLogin = user.login;
+      // GitHub can't fork a repo to its own owner. Signed in as that account, the "fork" step
+      // below would silently find the ORIGINAL project already there and treat it as success --
+      // writing this person's setup directly into the shared project instead of a private copy.
+      if (ghLogin.toLowerCase() === REPO_OWNER.toLowerCase()) {
+        accessToken = null;
+        fatal(`You're signed into GitHub as "${ghLogin}" -- that's the account this project itself lives on, so GitHub can't make you a separate copy of it. Sign out of GitHub in this browser (or use a private/incognito window), sign in with the GitHub account you want the automation to run under instead, then click Sign in again.`);
+        $("signin-idle").hidden = false;
+        $("signin-waiting").hidden = true;
+        $("btn-signin").disabled = false;
+        return;
+      }
       $("signin-waiting").hidden = true;
       $("signin-done").hidden = false;
       $("signin-done").textContent = "✓ Signed in as " + ghLogin;
