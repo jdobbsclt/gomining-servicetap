@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import math
 import os
@@ -132,6 +133,141 @@ def persist_refreshed_cookies(label, env_var, context):
         print(f"[{label}] WARNING: could not refresh {env_var} — {exc.stderr.strip()}")
     except Exception as exc:
         print(f"[{label}] WARNING: could not refresh {env_var} — {exc}")
+
+
+# ---- Where the refreshed login is kept between runs ------------------------------------------
+#
+# GoMining rotates the refresh token every time it is used, so each run has to save the NEW login
+# for the next one. Two ways to do that:
+#
+#   COOKIE_STORE=secret (default): write it back to the repo's GitHub Secret with `gh secret set`
+#       (persist_refreshed_cookies above). Needs GH_TOKEN: a fine-grained personal access token the
+#       user has to create by hand.
+#   COOKIE_STORE=cache (opt-in): keep it in the GitHub Actions cache instead, ENCRYPTED with a key
+#       held in the COOKIE_CACHE_KEY repo secret. No personal access token at all. The workflow
+#       restores the cache directory before this script runs and saves it afterwards; this code only
+#       reads and writes one encrypted file per account. A plain cache would be weaker than a secret
+#       (a workflow from an approved fork PR can restore caches from the base branch), so the file is
+#       useless without the key, and the key lives in a secret.
+#
+# In cache mode the GitHub Secret GOMINING_COOKIES_<LABEL> is only the SEED: the first run (and the
+# first run after the user re-captures a login) starts from it, every later run starts from the
+# newest saved login. A fingerprint of the seed is stored inside the saved login, so a freshly
+# re-captured seed always wins over an older saved one.
+COOKIE_STORE = os.environ.get("COOKIE_STORE", "secret").strip().lower()
+COOKIE_CACHE_DIR = os.environ.get("COOKIE_CACHE_DIR", "cookie-cache")
+COOKIE_CACHE_KEY = os.environ.get("COOKIE_CACHE_KEY", "").strip()
+COOKIE_CACHE_VERSION = 1
+
+# label -> fingerprint of the seed secret this run started from, and which store the login came from
+seed_fingerprints = {}
+cookie_sources = {}
+
+
+def _fernet():
+    # Imported lazily so the default (secret) mode never needs this package.
+    from cryptography.fernet import Fernet
+    return Fernet(COOKIE_CACHE_KEY.encode())
+
+
+def cookie_store_config_error():
+    """Why the configured cookie store can't work, or None if it's fine."""
+    if COOKIE_STORE not in ("secret", "cache"):
+        return f"COOKIE_STORE must be 'secret' or 'cache', not {COOKIE_STORE!r}."
+    if COOKIE_STORE != "cache":
+        return None
+    if not COOKIE_CACHE_KEY:
+        return "COOKIE_STORE is 'cache' but the COOKIE_CACHE_KEY secret is empty or missing."
+    try:
+        _fernet()
+    except Exception as exc:  # noqa: BLE001
+        return f"COOKIE_CACHE_KEY is not a valid key ({type(exc).__name__})."
+    return None
+
+
+def _seed_fingerprint(seed_json):
+    return hashlib.sha256(seed_json.encode("utf-8")).hexdigest()[:16]
+
+
+def _cache_file(label):
+    return os.path.join(COOKIE_CACHE_DIR, f"{label}.enc")
+
+
+def _has_login(cookies):
+    names = {c.get("name") for c in cookies if isinstance(c, dict) and c.get("value")}
+    return {"access_token", "refresh_token"} <= names
+
+
+def load_cookies_for_run(label, seed_json):
+    """The cookies (as JSON) this account's run should start from. Never raises.
+
+    Cache mode: the newest saved login, if it was saved from the CURRENT seed secret and still
+    decrypts; otherwise the seed. Secret mode: the seed, untouched.
+    """
+    seed_fingerprints[label] = _seed_fingerprint(seed_json)
+    cookie_sources[label] = "secret"
+    if COOKIE_STORE != "cache":
+        return seed_json
+    path = _cache_file(label)
+    if not os.path.exists(path):
+        print(f"[{label}] cookie store: no saved login yet -- starting from the repo secret.")
+        return seed_json
+    try:
+        with open(path, "rb") as f:
+            payload = json.loads(_fernet().decrypt(f.read()))
+        if payload.get("v") != COOKIE_CACHE_VERSION:
+            raise ValueError("unknown format version")
+        if payload.get("seed") != seed_fingerprints[label]:
+            print(f"[{label}] cookie store: the repo secret was replaced since the last save -- "
+                  "using the new secret and ignoring the older saved login.")
+            return seed_json
+        cookies = payload.get("cookies")
+        if not isinstance(cookies, list) or not _has_login(cookies):
+            raise ValueError("saved login is incomplete")
+        cookie_sources[label] = "cache"
+        print(f"[{label}] cookie store: using the saved login from {payload.get('saved_at', 'an earlier run')}.")
+        return json.dumps(cookies)
+    except Exception as exc:  # noqa: BLE001 -- a bad, old or foreign cache must never break the run
+        print(f"[{label}] cookie store: the saved login could not be used ({type(exc).__name__}) -- "
+              "falling back to the repo secret.")
+        return seed_json
+
+
+def persist_cookies_to_cache(label, context):
+    """Save this account's current login, encrypted, for the next run's restore step. Never raises.
+
+    Like persist_refreshed_cookies, called whenever the session was confirmed authenticated, so a
+    run that logs in fine but fails later still leaves the newest login behind.
+    """
+    if not COOKIE_CACHE_KEY:
+        print(f"[{label}] WARNING: not saving the login -- COOKIE_CACHE_KEY is missing.")
+        return
+    try:
+        cookies = [c for c in context.cookies()
+                   if c["domain"].endswith("gomining.com") and c["name"] in KEEP_COOKIE_NAMES]
+        if not _has_login(cookies):
+            print(f"[{label}] WARNING: not saving the login -- this run's browser has no complete login.")
+            return
+        payload = {
+            "v": COOKIE_CACHE_VERSION,
+            "seed": seed_fingerprints.get(label),
+            "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "cookies": cookies,
+        }
+        os.makedirs(COOKIE_CACHE_DIR, exist_ok=True)
+        path = _cache_file(label)
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(_fernet().encrypt(json.dumps(payload).encode("utf-8")))
+        os.replace(tmp, path)
+        print(f"[{label}] cookie store: saved this run's login (encrypted) for the next run.")
+        output_file = os.environ.get("GITHUB_OUTPUT")
+        if output_file:  # tells the workflow's "save cache" step there is something new to save
+            with open(output_file, "a", encoding="utf-8") as f:
+                f.write("cookies_updated=true\n")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[{label}] WARNING: could not save the login ({type(exc).__name__}) -- "
+              "the NEXT run may report a dead session.")
 
 
 def _find_field(node, name, depth=0):
@@ -900,7 +1036,10 @@ def run_for_account(playwright, label, env_var, cookies_json):
                 read_lock_model_on_fresh_page(context, label)
             if RUN_LOCK_EXTEND:
                 extend_locks_for_account(context, label)
-            persist_refreshed_cookies(label, env_var, context)
+            if COOKIE_STORE == "cache":
+                persist_cookies_to_cache(label, context)
+            else:
+                persist_refreshed_cookies(label, env_var, context)
         context.close()
         browser.close()
 
@@ -936,6 +1075,15 @@ def main():
             sentry_sdk.flush()
         sys.exit(1)
 
+    store_error = cookie_store_config_error()
+    if store_error:
+        print(f"FAILED: {store_error}")
+        if SENTRY_DSN:
+            sentry_sdk.capture_message(store_error, level="error")
+            capture_checkin(monitor_slug=MONITOR_SLUG, check_in_id=check_in_id, status=MonitorStatus.ERROR)
+            sentry_sdk.flush()
+        sys.exit(1)
+
     results = {}
 
     with sync_playwright() as playwright:
@@ -946,13 +1094,15 @@ def main():
                 results[account["label"]] = False
                 continue
 
+            cookies_json = load_cookies_for_run(account["label"], cookies_json)
             results[account["label"]] = run_for_account(
                 playwright, account["label"], account["env_var"], cookies_json
             )
 
     print("\n--- Summary ---")
     for label, ok in results.items():
-        print(f"{label}: {'OK' if ok else 'FAILED'}")
+        source = f" (login from the {cookie_sources[label]})" if COOKIE_STORE == "cache" and label in cookie_sources else ""
+        print(f"{label}: {'OK' if ok else 'FAILED'}{source}")
 
     publish_mining_discount(mining_discounts)  # optional + best-effort; never raises
     publish_lock_model(lock_models)            # optional + best-effort; never raises

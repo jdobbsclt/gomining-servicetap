@@ -51,7 +51,21 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
+      - name: Restore the saved GoMining login (Actions cache)
+        # Cache mode only (COOKIE_STORE=cache, set per-repo by the setup wizard): GoMining
+        # rotates the login every time it is used, so each run saves the new one for the next.
+        # This restores whatever was saved last; restore-keys' prefix picks the MOST RECENTLY
+        # created entry. In secret mode (this repo's own default) it just finds nothing to
+        # restore and the script ignores it.
+        uses: actions/cache/restore@v4
+        with:
+          path: cookie-cache
+          key: gomining-login-restore-only
+          restore-keys: |
+            gomining-login-
+
       - name: Run maintenance script
+        id: tap
         env:
           # Comma-separated account labels. For each label, add a matching
           # GOMINING_COOKIES_<LABEL> secret below (e.g. a third account
@@ -72,6 +86,16 @@ jobs:
           # without this secret set, just with no Sentry visibility.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: python gomining_maintenance.py
+
+      - name: Save this run's GoMining login (Actions cache)
+        # Cache mode only. `always()` so a run that logged in fine but failed later still
+        # leaves the newest login behind; the script only says cookies_updated=true when it
+        # really saved a new one (never in secret mode).
+        if: always() && steps.tap.outputs.cookies_updated == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cookie-cache
+          key: gomining-login-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload debug artifacts on failure
         if: failure()

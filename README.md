@@ -38,12 +38,20 @@ and follow its steps. It signs you into GitHub (the same device sign-in
 method the official `gh` command-line tool uses — you approve on GitHub's
 own site, never here), then forks this repo, writes your GitHub Secret, and
 edits the workflow file for you, ending with a real test run so you know it
-worked. Two things happen partway through, and the wizard walks you through
-both: a one-click bookmark that grabs your GoMining login (do it in a private
-window — the wizard explains why), and one GitHub token made from a pre-filled
-form (GitHub doesn't let a website create it for you). Your GitHub sign-in
-never touches your GoMining password, and vice versa — they're two completely
-separate logins.
+worked. The only manual part is a one-click bookmark that grabs your
+GoMining login (do it in a private window — the wizard explains why); there's
+no GitHub token to create. GoMining changes your login every time it's used,
+so the wizard also sets your fork up to keep the refreshed one in GitHub's
+own encrypted Actions cache automatically, between runs, forever — nothing
+to renew. Your GitHub sign-in never touches your GoMining password, and vice
+versa — they're two completely separate logins.
+
+If your automation ever stops working (GoMining invalidated the saved
+login, or GitHub paused the schedule after a long stretch of no activity),
+sign into [the wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
+again with the same GitHub account — it recognizes your existing fork and
+goes straight to fixing it (a fresh cookie capture, a re-enabled schedule)
+instead of trying to fork it again.
 
 If you'd rather do it by hand, or want to understand what the wizard is
 doing for you, here are the same steps manually:
@@ -138,17 +146,38 @@ worth working around client-side. The script was removed for that reason.
 
 ### 4. Add the GitHub Secrets
 
+*(The wizard does this step for you, in cache mode — see below. This is for
+setting up by hand.)*
+
 In your repo: **Settings → Secrets and variables → Actions → New repository
 secret**.
 
 - One `GOMINING_COOKIES_<LABEL>` secret per account, paste the JSON array
   from step 3
-- `GH_PAT_SECRETS_WRITE` (**required**, not optional), a **fine-grained**
+
+GoMining changes your login every time it's used, so something has to save
+the new one back after each run. Two ways to do that — pick one:
+
+**No token (what the wizard sets up):** in `.github/workflows/maintenance.yml`
+(and `lock_extend.yml` if you use it), add:
+```yaml
+COOKIE_STORE: cache
+COOKIE_CACHE_KEY: ${{ secrets.COOKIE_CACHE_KEY }}
+```
+and remove the `GH_TOKEN` line. Add a `COOKIE_CACHE_KEY` secret: it has to be
+a real Fernet key (a random string won't work — the script checks this and
+refuses to run rather than fail silently), generate one with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+(needs `pip install cryptography` locally) and paste its output exactly. The
+refreshed login is then kept, encrypted with that key, in GitHub's own
+Actions cache between runs — nothing to renew, ever.
+
+**Personal access token (the original method, still supported):**
+- `GH_PAT_SECRETS_WRITE`, a **fine-grained**
   GitHub personal access token, scoped to **only this repo**, with **Secrets:
-  read and write** permission and nothing else. GoMining changes your login
-  each time it's used, and this token is what lets the script save the new
-  one back to the secrets above after each run — without it, your automation
-  works about once and then stops. [This link opens the token form with the
+  read and write** permission and nothing else. This token is what lets the
+  script save the new login back to the secrets above after each run.
+  [This link opens the token form with the
   name, permission and a one-year expiry already filled
   in](https://github.com/settings/personal-access-tokens/new?name=ServiceTap+self-refresh&expires_in=365&secrets=write)
   — you still have to switch **Repository access** to "Only select
@@ -281,7 +310,11 @@ run log first:
 - **"session expired"**: that account's saved session is dead — GoMining
   served its signup page instead of the dashboard. This isn't retried (a
   dead session fails the same way every time), so you'll see it right away.
-  Fix: re-capture cookies for that account (step 3 above — the
+  Fix: re-capture cookies for that account. If you set up with
+  [the wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html),
+  sign in again with the same GitHub account — it recognizes your existing
+  fork and goes straight to a "refresh your login" screen, no re-forking.
+  Otherwise: step 3 above (the
   [cookie capture tool](https://jdobbsclt.github.io/gomining-servicetap/cookie-tool.html),
   the `capture-cookies` skill, or the manual DevTools method). GoMining
   invalidates sessions on their side from time to time, so this is expected
