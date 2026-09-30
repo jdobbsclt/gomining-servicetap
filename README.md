@@ -26,6 +26,18 @@ entirely.
 
 ## One-time setup
 
+### Before you start
+
+You need three things, and about 10 minutes:
+
+1. **A free GitHub account.** GitHub is the website that runs this for you
+   in the cloud. [Sign up here](https://github.com/signup) if you don't have
+   one (it's separate from your GoMining account, and the free plan is
+   enough).
+2. **Your GoMining login.** You'll log into GoMining once during setup so
+   the tool can stay logged in for you. It never sees or stores your password.
+3. **A desktop browser** (Chrome, Edge, Firefox or Safari) for the setup.
+
 ### The wizard (recommended)
 
 [Open the setup wizard](https://jdobbsclt.github.io/gomining-servicetap/setup.html)
@@ -41,8 +53,10 @@ account. It recognizes your existing fork and goes straight to fixing it —
 a fresh login, or waking a paused schedule — instead of trying to fork
 again.
 
-The rest of this section is the same setup by hand, for anyone who'd
-rather skip the wizard or see what it's doing.
+**Most people should stop here and use the wizard.** The rest of this
+section is the same setup done by hand, for people who are comfortable with
+GitHub settings, editing config files and copying values around, or who want
+to see what the wizard is doing.
 
 ### 1. Fork this repo
 
